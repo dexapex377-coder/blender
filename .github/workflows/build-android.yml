@@ -128,6 +128,7 @@ jobs:
             -DPYTHON_VERSION=3.13 \
             -DPYTHON_EXECUTABLE=$(which python3) \
             -DTEST_PYTHON_EXE=$(which python3) \
+            -DWITH_X11_XINPUT=OFF \
             -GNinja 2>&1 | tee cmake_config.log
 
       - name: Handle CMake failure
