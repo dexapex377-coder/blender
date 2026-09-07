@@ -39,7 +39,7 @@ jobs:
             exit 1
           fi
 
-      - name: Clone precompiled libs
+      - name: Clone precompiled libs (Android ARM64 — target build)
         run: |
           set -o pipefail
           git clone --depth 1 https://projects.blender.org/blender/lib-android_arm64.git blender/lib/android_arm64
@@ -47,16 +47,32 @@ jobs:
           git lfs install
           git lfs pull
 
-      - name: Verify zstd
+      - name: Clone precompiled libs (Linux x64 — host_tools)
         run: |
           set -o pipefail
-          SIZE=$(stat -c%s blender/lib/android_arm64/zstd/lib/libzstd.a 2>/dev/null || echo 0)
-          echo "zstd.a size: $SIZE bytes"
-          if [ "$SIZE" -lt 1000 ]; then
-            echo "ERROR: zstd is a LFS pointer"
+          git clone --depth 1 https://projects.blender.org/blender/lib-linux_x64.git blender/lib/linux_x64
+          cd blender/lib/linux_x64
+          git lfs install
+          git lfs pull
+
+      - name: Verify libs
+        run: |
+          set -o pipefail
+          # Android ARM64
+          SIZE_ARM=$(stat -c%s blender/lib/android_arm64/zstd/lib/libzstd.a 2>/dev/null || echo 0)
+          echo "ARM64 zstd.a: $SIZE_ARM bytes"
+          # Linux x64
+          SIZE_X64=$(stat -c%s blender/lib/linux_x64/zstd/lib/libzstd.a 2>/dev/null || echo 0)
+          echo "x64 zstd.a: $SIZE_X64 bytes"
+          if [ "$SIZE_ARM" -lt 1000 ] || [ "$SIZE_X64" -lt 1000 ]; then
+            echo "ERROR: LFS pointer not resolved"
             exit 1
           fi
-          echo "zstd OK"
+          echo "Both libs OK"
+          # Show what's in linux_x64
+          echo ""
+          echo "=== linux_x64 contents ==="
+          ls blender/lib/linux_x64/ | head -30
 
       - name: Setup NDK
         id: setup-ndk
@@ -64,171 +80,26 @@ jobs:
         with:
           ndk-version: r26d
 
-      - name: Prepare Host Dependencies
+      - name: Install host build tools
         run: |
           set -o pipefail
           sudo apt-get update
-
-          # ── Core build tools ──
-          sudo apt-get install -y gcc-14 g++-14 ninja-build pkg-config
-
-          # ── Math / compression ──
-          sudo apt-get install -y \
-            zlib1g-dev libzstd-dev libgmp-dev
-
-          # ── Image formats ──
-          sudo apt-get install -y \
-            libjpeg-dev libpng-dev libtiff-dev libwebp-dev libopenjp2-7-dev
-
-          # ── OpenEXR / Imath (core deps for OIIO) ──
-          sudo apt-get install -y libopenexr-dev libimath-dev
-
-          # ── OpenImageIO (REQUIRED by platform_unix.cmake) ──
-          sudo apt-get install -y libopenimageio-dev openimageio-tools
-
-          # ── OpenColorIO (REQUIRED by platform_unix.cmake) ──
-          sudo apt-get install -y libopencolorio-dev
-
-          # ── OpenCV headers (OIIO cmake config references /usr/include/opencv4) ──
-          sudo apt-get install -y libopencv-dev
-
-          # ── GL / Vulkan / Epoxy ──
-          sudo apt-get install -y \
-            libepoxy-dev libgl1-mesa-dev \
-            libvulkan-dev mesa-vulkan-drivers
-
-          # ── Fonts / text ──
-          sudo apt-get install -y \
-            libfreetype-dev libfreetype6-dev libharfbuzz-dev libfribidi-dev libbrotli-dev
-
-          # ── C++ formatting ──
-          sudo apt-get install -y libfmt-dev
-
-          # ── Audio ──
-          sudo apt-get install -y libopenal-dev libsndfile1-dev
-
-          # ── FFmpeg (host_tools needs x86_64 libs for audaspace) ──
-          sudo apt-get install -y \
-            libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
-            libswscale-dev libswresample-dev libavfilter-dev
-
-          # ── Shader compiler ──
-          sudo apt-get install -y libshaderc-dev
-
-          # ── Threading / compute ──
-          sudo apt-get install -y libtbb-dev
-
-          # ── Python ──
-          sudo apt-get install -y python3-dev
-
-          # ── Math / scientific ──
-          sudo apt-get install -y \
-            libeigen3-dev libceres-dev libfftw3-dev
-
-          # ── Geometry / mesh ──
-          sudo apt-get install -y libembree-dev
-
-          # ── PugiXML ──
-          sudo apt-get install -y libpugixml-dev
-
-          # ── Rubberband ──
-          sudo apt-get install -y librubberband-dev
-
-          # ── Draco ──
-          sudo apt-get install -y libdraco-dev
-
-          # ── Meshoptimizer ──
-          sudo apt-get install -y libmeshoptimizer-dev
-
-          # ── GCC 14 ──
+          sudo apt-get install -y gcc-14 g++-14 ninja-build pkg-config python3-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
-
-          echo "=== gcc ===" && gcc --version | head -1
-          echo "=== g++ ===" && g++ --version | head -1
-
-          # ── Verify critical packages ──
-          echo ""
-          echo "=== Verifying critical packages ==="
-          for pkg in libopenimageio-dev libopencolorio-dev libopencv-dev libembree-dev libeigen3-dev libceres-dev; do
-            if dpkg -s "$pkg" 2>/dev/null | grep -q "Status: install ok installed"; then
-              echo "  OK: $pkg"
-            else
-              echo "  FAIL: $pkg NOT installed"
-              exit 1
-            fi
-          done
-
-          # ── Fix broken OCIO cmake config: references "/include" which doesn't exist ──
-          # Ubuntu's libopencolorio-dev has a broken INTERFACE_INCLUDE_DIRECTORIES="/include"
-          echo "=== Fixing ALL OpenColorIO cmake files ==="
-          for f in $(find /usr -name "OpenColorIO*.cmake" 2>/dev/null); do
-            if grep -q '"/include"' "$f" 2>/dev/null; then
-              echo "  Fixing: $f"
-              sudo sed -i 's|"/include"|"/usr/include"|g' "$f"
-            fi
-          done
-
-          # Ensure cmake can find OCIO at standard path: <prefix>/cmake/OpenColorIO/<Name>Config.cmake
-          OCIO_CONFIG=$(find /usr -name "OpenColorIOConfig.cmake" 2>/dev/null | head -1)
-          if [ -n "$OCIO_CONFIG" ]; then
-            OCIO_CMAKE_DIR=$(dirname "$OCIO_CONFIG")
-            STANDARD_DIR="/usr/share/cmake/OpenColorIO"
-            if [ "$OCIO_CMAKE_DIR" != "$STANDARD_DIR" ]; then
-              echo "Creating standard cmake path: $STANDARD_DIR"
-              sudo mkdir -p "$STANDARD_DIR"
-              sudo cp -f "$OCIO_CONFIG" "$STANDARD_DIR/"
-              VERSION_FILE=$(find /usr -name "OpenColorIOConfigVersion.cmake" 2>/dev/null | head -1)
-              [ -n "$VERSION_FILE" ] && sudo cp -f "$VERSION_FILE" "$STANDARD_DIR/"
-              for f in $(find /usr -name "OpenColorIOTargets*.cmake" 2>/dev/null); do
-                sudo cp -f "$f" "$STANDARD_DIR/"
-              done
-              # Fix the copied files too
-              for f in "$STANDARD_DIR"/*.cmake; do
-                if grep -q '"/include"' "$f" 2>/dev/null; then
-                  echo "  Fixing copy: $f"
-                  sudo sed -i 's|"/include"|"/usr/include"|g' "$f"
-                fi
-              done
-            fi
-          fi
-
-          # Verify host_tools can find OIIO/OCIO from system
-          echo ""
-          echo "=== Final verification ==="
-          echo "OIIO config (should be at standard cmake path):"
-          find /usr/lib -path "*/cmake/OpenImageIO/OpenImageIOConfig.cmake" 2>/dev/null | head -1
-          echo "OCIO config (should be at standard cmake path):"
-          ls -la /usr/share/cmake/OpenColorIO/OpenColorIOConfig.cmake 2>/dev/null || echo "NOT FOUND"
-          echo ""
-
-          # ── Locate cmake config files ──
-          echo ""
-          echo "=== Locating cmake configs ==="
-          echo "OpenImageIO:"
-          find /usr -name "OpenImageIOConfig.cmake" 2>/dev/null | head -3
-          echo "OpenColorIO:"
-          find /usr -name "OpenColorIOConfig.cmake" 2>/dev/null | head -3
-          echo "Embree:"
-          find /usr -name "embree-config.cmake" -o -name "EmbreeConfig.cmake" 2>/dev/null | head -3
-          echo ""
+          gcc --version | head -1
+          g++ --version | head -1
 
       - name: Setup Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      - name: Verify Python 3.13
-        run: |
-          which python3 && python3 --version
-          echo "Python path: $(which python3)"
-
-      - name: Configure CMake (attempt 1)
+      - name: Configure CMake
         id: cmake-attempt1
         run: |
           set -o pipefail
           cd blender
-
           cmake -B build \
             -S . \
             -DCMAKE_TOOLCHAIN_FILE=build_files/cmake/platform/platform_android_toolchain.cmake \
