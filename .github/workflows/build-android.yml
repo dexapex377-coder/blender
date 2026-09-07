@@ -108,6 +108,8 @@ jobs:
 
       - name: Configure CMake (attempt 1)
         id: cmake-attempt1
+        env:
+          CMAKE_PREFIX_PATH: /usr/share/cmake
         run: |
           set -o pipefail
           cd blender
@@ -120,7 +122,6 @@ jobs:
             -DWITH_TESTS=OFF \
             -DWITH_PYTHON_INSTALL=OFF \
             -DWITH_CYCLES_OSL=OFF \
-            -DOpenColorIO_DIR=/usr/share/cmake \
             -DPYTHON_VERSION=3.13 \
             -DPYTHON_EXECUTABLE=$(which python3) \
             -DTEST_PYTHON_EXE=$(which python3) \
