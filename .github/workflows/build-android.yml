@@ -78,7 +78,47 @@ jobs:
         id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r26d
+          ndk-version: r30-beta1
+          link-to-sdk: true
+
+      - name: Verify NDK and Vulkan Headers
+        run: |
+          set -o pipefail
+          NDK_PATH="${{ steps.setup-ndk.outputs.ndk-path }}"
+          echo "========================================"
+          echo "1. ANDROID_NDK_ROOT: $NDK_PATH"
+          echo "Output ndk-full-version: ${{ steps.setup-ndk.outputs.ndk-full-version }}"
+          echo "========================================"
+          echo "2. NDK source.properties:"
+          cat "$NDK_PATH/source.properties"
+          echo "========================================"
+          echo "3. Clang version:"
+          CLANG_BIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          if [ -x "$CLANG_BIN" ]; then
+            "$CLANG_BIN" --version
+          else
+            echo "Clang binary not found at standard path, searching..."
+            find "$NDK_PATH" -name "clang" -type f
+          fi
+          echo "========================================"
+          echo "4. vulkan_core.h path and version:"
+          VK_HEADER="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/vulkan/vulkan_core.h"
+          echo "vulkan_core.h path: $VK_HEADER"
+          if [ -f "$VK_HEADER" ]; then
+            echo "VK_HEADER_VERSION:"
+            grep "#define VK_HEADER_VERSION " "$VK_HEADER"
+            echo "========================================"
+            echo "5. Checking required Vulkan features:"
+            grep -Hn "VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT" "$VK_HEADER"
+            grep -Hn "VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR" "$VK_HEADER"
+            grep -Hn "VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME" "$VK_HEADER"
+            grep -Hn "VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME" "$VK_HEADER"
+            echo "Vulkan types and extensions check PASSED."
+          else
+            echo "ERROR: vulkan_core.h not found at $VK_HEADER"
+            exit 1
+          fi
+          echo "========================================"
 
       - name: Install host build tools
         run: |
@@ -102,6 +142,7 @@ jobs:
           cd blender
           cmake -B build \
             -S . \
+            -DTARGET_ANDROID=ON \
             -DCMAKE_TOOLCHAIN_FILE=build_files/cmake/platform/platform_android_toolchain.cmake \
             -DANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }} \
             -DCMAKE_INSTALL_PREFIX=install \
@@ -158,5 +199,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: cmake_config*.log build.log gradle.log
+          path: |
+            blender/cmake_config*.log
+            blender/build.log
+            blender/gradle_stage.log
+            blender/build/gradle/gradle.log
+            *.log
           if-no-files-found: ignore
