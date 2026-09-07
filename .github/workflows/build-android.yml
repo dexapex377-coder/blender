@@ -64,6 +64,16 @@ jobs:
         with:
           ndk-version: r26d
 
+      - name: Install GCC 14
+        run: |
+          set -o pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-14 g++-14
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+          gcc --version
+          g++ --version
+
       - name: Configure CMake (attempt 1)
         id: cmake-attempt1
         run: |
