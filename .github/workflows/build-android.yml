@@ -72,11 +72,35 @@ jobs:
             libjpeg-dev libpng-dev zlib1g-dev libzstd-dev libepoxy-dev libfmt-dev \
             libfreetype6-dev libtiff-dev libwebp-dev libopenexr-dev libgl1-mesa-dev \
             libvulkan-dev mesa-vulkan-drivers vulkan-tools \
-            libshaderc-dev
+            libshaderc-dev \
+            libopenimageio-dev libopencolorio-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
           gcc --version
           g++ --version
+
+      - name: Verify OIIO and OCIO .cmake files
+        run: |
+          set -o pipefail
+          echo "=== OpenImageIO .cmake files ==="
+          find /usr -iname "*OpenImageIOConfig.cmake" -o -iname "*openimageio-config.cmake" 2>/dev/null
+          dpkg -L libopenimageio-dev 2>/dev/null | grep -i cmake | head -5
+          echo "=== OpenColorIO .cmake files ==="
+          find /usr -iname "*OpenColorIOConfig.cmake" -o -iname "*opencolorio-config.cmake" 2>/dev/null
+          dpkg -L libopencolorio-dev 2>/dev/null | grep -i cmake | head -5
+          echo "=== shaderc .pc files ==="
+          find /usr -iname "shaderc*.pc" 2>/dev/null | xargs -I{} sh -c 'echo "--- {} ---"; cat {}'
+          echo "=== done ==="
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Verify Python 3.13
+        run: |
+          which python3 && python3 --version
+          echo "Python path: $(which python3)"
 
       - name: Configure CMake (attempt 1)
         id: cmake-attempt1
@@ -92,7 +116,9 @@ jobs:
             -DWITH_TESTS=OFF \
             -DWITH_PYTHON_INSTALL=OFF \
             -DWITH_CYCLES_OSL=OFF \
-          -DTEST_PYTHON_EXE=/usr/bin/python3 \
+            -DPYTHON_VERSION=3.13 \
+            -DPYTHON_EXECUTABLE=$(which python3) \
+            -DTEST_PYTHON_EXE=$(which python3) \
             -GNinja 2>&1 | tee cmake_config.log
 
       - name: Handle CMake failure
@@ -147,3 +173,4 @@ jobs:
           name: build-logs
           path: cmake_config*.log build.log gradle.log
           if-no-files-found: ignore
+
