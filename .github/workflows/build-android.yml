@@ -73,7 +73,8 @@ jobs:
             libfreetype6-dev libtiff-dev libwebp-dev libopenexr-dev libgl1-mesa-dev \
             libvulkan-dev mesa-vulkan-drivers vulkan-tools \
             libshaderc-dev \
-            libopenimageio-dev libopencolorio-dev
+            libopenimageio-dev openimageio-tools \
+            libopencolorio-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
           gcc --version
@@ -85,6 +86,9 @@ jobs:
           echo "=== OpenImageIO .cmake files ==="
           find /usr -iname "*OpenImageIOConfig.cmake" -o -iname "*openimageio-config.cmake" 2>/dev/null
           dpkg -L libopenimageio-dev 2>/dev/null | grep -i cmake | head -5
+          echo "=== iconvert binary ==="
+          which iconvert 2>/dev/null || echo "iconvert NOT FOUND"
+          ls -la /usr/bin/iconvert 2>/dev/null || echo "no iconvert at /usr/bin/iconvert"
           echo "=== OpenColorIO .cmake files ==="
           find /usr -iname "*OpenColorIOConfig.cmake" -o -iname "*opencolorio-config.cmake" 2>/dev/null
           dpkg -L libopencolorio-dev 2>/dev/null | grep -i cmake | head -5
