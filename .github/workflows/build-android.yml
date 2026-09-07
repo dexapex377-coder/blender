@@ -107,6 +107,11 @@ jobs:
           # ── Audio ──
           sudo apt-get install -y libopenal-dev libsndfile1-dev
 
+          # ── FFmpeg (host_tools needs x86_64 libs for audaspace) ──
+          sudo apt-get install -y \
+            libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
+            libswscale-dev libswresample-dev libavfilter-dev
+
           # ── Shader compiler ──
           sudo apt-get install -y libshaderc-dev
 
