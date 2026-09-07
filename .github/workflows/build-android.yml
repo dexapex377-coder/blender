@@ -77,7 +77,8 @@ jobs:
             libopencolorio-dev \
             libembree-dev \
             libeigen3-dev \
-            libceres-dev
+            libopenexr-dev \
+            libimath-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
           gcc --version
@@ -147,7 +148,7 @@ jobs:
       - name: Build and stage Gradle
         if: steps.cmake-attempt1.outcome == 'success'
         env:
-          CMAKE_PREFIX_PATH: /home/runner/work/blender/blender/blender/lib/android_arm64/openimageio:/home/runner/work/blender/blender/blender/lib/android_arm64/opencolorio:/usr/lib/x86_64-linux-gnu/cmake:/usr/share/cmake
+          CMAKE_PREFIX_PATH: /usr/share/cmake:/usr/lib/x86_64-linux-gnu/cmake
         run: |
           set -o pipefail
           echo "=== Testing OpenColorIO with CMAKE_PREFIX_PATH ==="
