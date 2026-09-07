@@ -14,23 +14,7 @@ jobs:
         with:
           path: blender
           ref: android
-          lfs: false
-
-      - name: Configure LFS to use parent repo
-        run: |
-          cd blender
-          git config lfs.fetchexclude "assets/brushes/essentials_brushes-curve_sculpt.blend"
-          git lfs install --local
-          git remote add blender https://github.com/blender/blender.git 2>/dev/null || true
-          git lfs pull blender android 2>/dev/null || git lfs pull origin android
-          git restore --source=HEAD :/
-          REMAINING=$(git status --short | wc -l)
-          echo "Remaining files: $REMAINING"
-          if [ "$REMAINING" -gt 1 ]; then
-            echo "ERROR: more than 1 file remaining"
-            git status --short
-            exit 1
-          fi
+          lfs: true
 
       - name: Clone precompiled libs
         run: |
