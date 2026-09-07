@@ -47,6 +47,14 @@ jobs:
           git lfs install
           git lfs pull
 
+      - name: Clone precompiled host libs (for host_tools cross-build)
+        run: |
+          set -o pipefail
+          git clone --depth 1 https://projects.blender.org/blender/lib-linux_x64.git blender/lib/linux_x64
+          cd blender/lib/linux_x64
+          git lfs install
+          git lfs pull
+
       - name: Verify zstd
         run: |
           set -o pipefail
@@ -64,11 +72,11 @@ jobs:
         with:
           ndk-version: r26d
 
-      - name: Install GCC 14 and system deps for host_tools
+      - name: Install GCC 14
         run: |
           set -o pipefail
           sudo apt-get update
-          sudo apt-get install -y gcc-14 g++-14 libjpeg-dev libpng-dev zlib1g-dev libzstd-dev libepoxy-dev libfmt-dev
+          sudo apt-get install -y gcc-14 g++-14
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
           gcc --version
