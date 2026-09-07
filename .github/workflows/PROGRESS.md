@@ -30,3 +30,25 @@
 - No reescribir código fuente de Blender sin autorización
 - No asumir arquitectura sin verificar (sandbox ARM64 vs runner x86_64)
 - No confundir CMake Warnings con CMake Errors bloqueantes
+
+### 5. host_tools sub-build fails: OpenImageIO/OpenColorIO cmake configs broken (2026-09-07)
+
+**Síntoma**: Configure CMake ✅, pero Build ❌ en `[32/7642] Performing configure step for 'host_tools'`. Errores:
+- `Imported target "OpenImageIO::OpenImageIO" includes non-existent path`
+- `Imported target "OpenColorIO::OpenColorIO" includes non-existent path`
+
+**Causa raíz**: `host_tools` (makesdna/makesrna/datatoc/shader_tool) es un external project que ejecuta su propia configuración CMake heredando TODOS los flags `WITH_*` del build principal. Hereda `WITH_OPENIMAGEIO=ON` y `WITH_OPENCOLORIO=ON`. Los cmake configs del sistema (`/usr/lib/x86_64-linux-gnu/cmake/OpenImageIO/OpenImageIOConfig.cmake`) apuntan a `/usr/include/opencv4` (OpenCV, no instalado) y tienen paths rotos. El `CMAKE_PREFIX_PATH` del env solo afecta al configure principal, no a los sub-builds de CMake.
+
+**Fix**: Tres flags a nivel del workflow, heredados por host_tools:
+```yaml
+-DWITH_OPENIMAGEIO=OFF
+-DWITH_OPENCOLORIO=OFF
+-DWITH_OPENIMAGEDENOISE=OFF
+```
+
+**Justificación**: host_tools NO necesita OIIO/OCIO para generar código (makesdna/makesrna/datatoc). Desactivarlas a nivel workflow evita que host_tools intente buscar system libs con cmake configs rotos, sin tocar código fuente de Blender. El Blender final sigue usando las libs precompiladas de Android normalmente vía `LIBDIR`.
+
+**Si el build principal se queja** de que le faltan OIIO/OCIO para su compilación: ese caso ameritaría revisar en conjunto.
+
+**Commits/workflow**: Solo `.github/workflows/build-android.yml` (android + main).
+
