@@ -95,20 +95,15 @@ jobs:
           uname -m
           echo "=== done ==="
 
-      - name: Debug Python versions
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Verify Python 3.13
         run: |
-          echo "=== available python3 ==="
-          ls /usr/bin/python3* 2>/dev/null || echo "none in /usr/bin"
-          echo "=== /opt/hostedtoolcache/Python/ ==="
-          ls /opt/hostedtoolcache/Python/ 2>/dev/null || echo "none"
-          echo "=== which python3 ==="
-          which python3 2>/dev/null || echo "not found"
-          python3 --version 2>/dev/null || echo "no default"
-          echo "=== python3.13 ==="
-          which python3.13 2>/dev/null || echo "not in PATH"
-          python3.13 --version 2>/dev/null || echo "no executable"
-          echo "=== cmake PYTHON vars ==="
-          cmake --version | head -1
+          which python3 && python3 --version
+          echo "Python path: $(which python3)"
 
       - name: Configure CMake (attempt 1)
         id: cmake-attempt1
@@ -124,7 +119,8 @@ jobs:
             -DWITH_TESTS=OFF \
             -DWITH_PYTHON_INSTALL=OFF \
             -DWITH_CYCLES_OSL=OFF \
-          -DTEST_PYTHON_EXE=/usr/bin/python3 \
+            -DPYTHON_VERSION=3.13 \
+            -DPYTHON_EXECUTABLE=$(which python3) \
             -GNinja 2>&1 | tee cmake_config.log
 
       - name: Handle CMake failure
