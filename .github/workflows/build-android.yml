@@ -64,42 +64,111 @@ jobs:
         with:
           ndk-version: r26d
 
-      - name: Install GCC 14 and system deps for host_tools
+      - name: Prepare Host Dependencies
         run: |
           set -o pipefail
           sudo apt-get update
-          sudo apt-get install -y gcc-14 g++-14 \
-            libjpeg-dev libpng-dev zlib1g-dev libzstd-dev libepoxy-dev libfmt-dev \
-            libfreetype6-dev libtiff-dev libwebp-dev libopenexr-dev libgl1-mesa-dev \
-            libvulkan-dev mesa-vulkan-drivers vulkan-tools \
-            libshaderc-dev \
-            libopenimageio-dev openimageio-tools \
-            libopencolorio-dev \
-            libembree-dev \
-            libeigen3-dev \
-            libopenexr-dev \
-            libimath-dev \
-            libceres-dev
+
+          # ── Core build tools ──
+          sudo apt-get install -y gcc-14 g++-14 ninja-build pkg-config
+
+          # ── Math / compression ──
+          sudo apt-get install -y \
+            zlib1g-dev libzstd-dev libgmp-dev
+
+          # ── Image formats ──
+          sudo apt-get install -y \
+            libjpeg-dev libpng-dev libtiff-dev libwebp-dev libopenjp2-7-dev
+
+          # ── OpenEXR / Imath (core deps for OIIO) ──
+          sudo apt-get install -y libopenexr-dev libimath-dev
+
+          # ── OpenImageIO (REQUIRED by platform_unix.cmake) ──
+          sudo apt-get install -y libopenimageio-dev openimageio-tools
+
+          # ── OpenColorIO (REQUIRED by platform_unix.cmake) ──
+          sudo apt-get install -y libopencolorio-dev
+
+          # ── GL / Vulkan / Epoxy ──
+          sudo apt-get install -y \
+            libepoxy-dev libgl1-mesa-dev \
+            libvulkan-dev mesa-vulkan-drivers
+
+          # ── Fonts / text ──
+          sudo apt-get install -y \
+            libfreetype-dev libfreetype6-dev libharfbuzz-dev libfribidi-dev libbrotli-dev
+
+          # ── C++ formatting ──
+          sudo apt-get install -y libfmt-dev
+
+          # ── Audio ──
+          sudo apt-get install -y libopenal-dev libsndfile1-dev
+
+          # ── Shader compiler ──
+          sudo apt-get install -y libshaderc-dev
+
+          # ── Threading / compute ──
+          sudo apt-get install -y libtbb-dev
+
+          # ── Python ──
+          sudo apt-get install -y python3-dev
+
+          # ── Math / scientific ──
+          sudo apt-get install -y \
+            libeigen3-dev libceres-dev libfftw3-dev
+
+          # ── Geometry / mesh ──
+          sudo apt-get install -y libembree-dev
+
+          # ── PugiXML ──
+          sudo apt-get install -y libpugixml-dev
+
+          # ── Rubberband ──
+          sudo apt-get install -y librubberband-dev
+
+          # ── Draco ──
+          sudo apt-get install -y libdraco-dev
+
+          # ── Meshoptimizer ──
+          sudo apt-get install -y libmeshoptimizer-dev
+
+          # ── GCC 14 ──
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
-          gcc --version
-          g++ --version
 
-      - name: Verify OIIO and OCIO .cmake files
-        run: |
-          set -o pipefail
-          echo "=== OpenImageIO .cmake files ==="
-          find /usr -iname "*OpenImageIOConfig.cmake" -o -iname "*openimageio-config.cmake" 2>/dev/null
-          dpkg -L libopenimageio-dev 2>/dev/null | grep -i cmake | head -5
-          echo "=== iconvert binary ==="
-          which iconvert 2>/dev/null || echo "iconvert NOT FOUND"
-          ls -la /usr/bin/iconvert 2>/dev/null || echo "no iconvert at /usr/bin/iconvert"
-          echo "=== OpenColorIO .cmake files ==="
-          find /usr -iname "*OpenColorIOConfig.cmake" -o -iname "*opencolorio-config.cmake" 2>/dev/null
-          dpkg -L libopencolorio-dev 2>/dev/null | grep -i cmake | head -5
-          echo "=== shaderc .pc files ==="
-          find /usr -iname "shaderc*.pc" 2>/dev/null | xargs -I{} sh -c 'echo "--- {} ---"; cat {}'
-          echo "=== done ==="
+          echo "=== gcc ===" && gcc --version | head -1
+          echo "=== g++ ===" && g++ --version | head -1
+
+          # ── Verify critical packages ──
+          echo ""
+          echo "=== Verifying critical packages ==="
+          for pkg in libopenimageio-dev libopencolorio-dev libembree-dev libeigen3-dev libceres-dev; do
+            if dpkg -s "$pkg" 2>/dev/null | grep -q "Status: install ok installed"; then
+              echo "  OK: $pkg"
+            else
+              echo "  FAIL: $pkg NOT installed"
+              exit 1
+            fi
+          done
+
+          # ── Locate cmake config files ──
+          echo ""
+          echo "=== Locating cmake configs ==="
+          echo "OpenImageIO:"
+          find /usr -name "OpenImageIOConfig.cmake" 2>/dev/null | head -3
+          echo "OpenColorIO:"
+          find /usr -name "OpenColorIOConfig.cmake" 2>/dev/null | head -3
+          echo "Embree:"
+          find /usr -name "embree-config.cmake" -o -name "EmbreeConfig.cmake" 2>/dev/null | head -3
+          echo "Eigen3:"
+          find /usr -name "Eigen3Config.cmake" -o -name "eigen3-config.cmake" 2>/dev/null | head -3
+          echo "Ceres:"
+          find /usr -name "CeresConfig.cmake" -o -name "ceres-config.cmake" 2>/dev/null | head -3
+          echo "TBB:"
+          find /usr -name "TBBConfig.cmake" -o -name "tbb-config.cmake" 2>/dev/null | head -3
+          echo "OpenVDB:"
+          find /usr -name "OpenVDBConfig.cmake" 2>/dev/null | head -3
+          echo ""
 
       - name: Setup Python 3.13
         uses: actions/setup-python@v5
@@ -116,6 +185,19 @@ jobs:
         run: |
           set -o pipefail
           cd blender
+
+          # Locate system cmake configs for OIIO/OCIO
+          # On Ubuntu 24.04, OpenColorIO is at /usr/share/cmake/ without <Name>/ subdirectory
+          OCIO_DIR=$(find /usr -name "OpenColorIOConfig.cmake" -exec dirname {} \; 2>/dev/null | head -1)
+          OIIO_DIR=$(find /usr -name "OpenImageIOConfig.cmake" -exec dirname {} \; 2>/dev/null | head -1)
+          echo "OpenColorIO_DIR=$OCIO_DIR"
+          echo "OpenImageIO_DIR=$OIIO_DIR"
+
+          # Build a CMAKE_PREFIX_PATH from all system cmake dirs
+          # This gets forwarded to host_tools via our patched host_tools.cmake
+          PREFIX_PATHS=$(find /usr/lib /usr/share -maxdepth 4 -name "cmake" -type d 2>/dev/null | tr '\n' ':' | sed 's/:$//')
+          echo "CMAKE_PREFIX_PATH=$PREFIX_PATHS"
+
           cmake -B build \
             -S . \
             -DCMAKE_TOOLCHAIN_FILE=build_files/cmake/platform/platform_android_toolchain.cmake \
@@ -125,29 +207,21 @@ jobs:
             -DWITH_TESTS=OFF \
             -DWITH_PYTHON_INSTALL=OFF \
             -DWITH_CYCLES_OSL=OFF \
-            -DWITH_OPENIMAGEIO=OFF \
-            -DWITH_OPENCOLORIO=OFF \
-            -DWITH_OPENIMAGEDENOISE=OFF \
+            -DWITH_GHOST_X11=OFF \
             -DPYTHON_VERSION=3.13 \
             -DPYTHON_EXECUTABLE=$(which python3) \
             -DTEST_PYTHON_EXE=$(which python3) \
-            -DWITH_X11_XINPUT=OFF \
-            -DWITH_GHOST_X11=OFF \
+            -DOpenColorIO_DIR="$OCIO_DIR" \
+            -DOpenImageIO_DIR="$OIIO_DIR" \
+            -DCMAKE_PREFIX_PATH="$PREFIX_PATHS" \
             -GNinja 2>&1 | tee cmake_config.log
 
       - name: Handle CMake failure
         if: steps.cmake-attempt1.outcome == 'failure'
         run: |
           set -o pipefail
-          if grep -q "_LIBCPP_USING_IF_EXISTS\|incomplete type 'tm'" cmake_config.log 2>/dev/null; then
-            echo "ctime/tm error detected — STOPPING for diagnosis"
-            cat cmake_config.log
-            exit 1
-          else
-            echo "CMake failed with different error"
-            cat cmake_config.log
-            exit 1
-          fi
+          cat cmake_config.log
+          exit 1
 
       - name: Build and stage Gradle
         if: steps.cmake-attempt1.outcome == 'success'
@@ -187,4 +261,3 @@ jobs:
           name: build-logs
           path: cmake_config*.log build.log gradle.log
           if-no-files-found: ignore
-
