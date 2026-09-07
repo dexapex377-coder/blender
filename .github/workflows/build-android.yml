@@ -80,10 +80,11 @@ jobs:
             exit 1
           fi
 
-      - name: Build
+      - name: Build and stage Gradle
         run: |
           cd blender
           cmake --build build --target install 2>&1 | tee build.log
+          cmake --build build --target gradle_stage 2>&1 | tee gradle_stage.log
 
       - name: Assemble APK
         run: |
