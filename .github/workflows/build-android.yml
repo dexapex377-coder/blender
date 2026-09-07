@@ -75,8 +75,8 @@ jobs:
             -DANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }} \
             -DCMAKE_INSTALL_PREFIX=install \
             -C build_files/cmake/config/blender_release.cmake \
-            -DWITH_TESTS=OFF \
             -DWITH_PYTHON_INSTALL=OFF \
+          -DTEST_PYTHON_EXE=/usr/bin/python3 \
             -GNinja 2>&1 | tee cmake_config.log
 
       - name: Handle CMake failure
