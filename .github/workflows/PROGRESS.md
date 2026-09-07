@@ -52,3 +52,24 @@
 
 **Commits/workflow**: Solo `.github/workflows/build-android.yml` (android + main).
 
+---
+
+### 6. Fix: remove OIIO/OCIO/OIDN workaround — full host deps + host_tools.cmake patch (2026-09-07)
+
+**Fix anterior ( #5 )**: `WITH_OPENIMAGEIO=OFF -DWITH_OPENCOLORIO=OFF -DWITH_OPENIMAGEDENOISE=OFF` como workaround.
+
+**Problema con el workaround**: desactiva features que Blender 5.2 necesita para un build completo. El usuario quiere un build FULL.
+
+**Causa raíz (confirmada)**:
+1. `platform_unix.cmake:495` ejecuta `find_package_wrapper(OpenImageIO REQUIRED)` y `:501` ejecuta `find_package_wrapper(OpenColorIO 2.0.0 REQUIRED)` **sin** `if(WITH_*)` guard — siempre corren.
+2. `host_tools.cmake:27` solo hacía forward de variables cache `^WITH_*` al sub-build ExternalProject. Las variables `*_DIR` (como `OpenColorIO_DIR`) y `CMAKE_PREFIX_PATH` **no** se heredan.
+3. El sub-build host_tools intentaba encontrar OIIO/OCIO con cmake configs del sistema que tenían paths rotos (`/usr/include/opencv4` no existe).
+
+**Fix definitivo** (2 partes):
+- **`host_tools.cmake:27`**: cambiar regex de `^WITH_` a `^WITH_|_DIR$|CMAKE_PREFIX_PATH` para que el sub-build herede `_DIR` y `CMAKE_PREFIX_PATH` del build principal.
+- **`build-android.yml`**: instalar TODAS las deps host por apt, y pasar `-DOpenColorIO_DIR=...`, `-DOpenImageIO_DIR=...`, `-DCMAKE_PREFIX_PATH=...` al cmake configure principal. Estas variables ahora se propagan al sub-build vía el fix de host_tools.
+
+**Archivos modificados**: `build_files/cmake/host_tools.cmake` (android branch), `.github/workflows/build-android.yml` (main branch).
+
+**Commits/workflow**: `build-android.yml` (main) + `host_tools.cmake` (android).
+
