@@ -89,6 +89,9 @@ jobs:
           # ── OpenColorIO (REQUIRED by platform_unix.cmake) ──
           sudo apt-get install -y libopencolorio-dev
 
+          # ── OpenCV headers (OIIO cmake config references /usr/include/opencv4) ──
+          sudo apt-get install -y libopencv-dev
+
           # ── GL / Vulkan / Epoxy ──
           sudo apt-get install -y \
             libepoxy-dev libgl1-mesa-dev \
@@ -142,7 +145,7 @@ jobs:
           # ── Verify critical packages ──
           echo ""
           echo "=== Verifying critical packages ==="
-          for pkg in libopenimageio-dev libopencolorio-dev libembree-dev libeigen3-dev libceres-dev; do
+          for pkg in libopenimageio-dev libopencolorio-dev libopencv-dev libembree-dev libeigen3-dev libceres-dev; do
             if dpkg -s "$pkg" 2>/dev/null | grep -q "Status: install ok installed"; then
               echo "  OK: $pkg"
             else
@@ -150,6 +153,20 @@ jobs:
               exit 1
             fi
           done
+
+          # ── Fix broken OCIO cmake config: references "/include" which doesn't exist ──
+          # Ubuntu's libopencolorio-dev has a broken INTERFACE_INCLUDE_DIRECTORIES="/include"
+          # Fix: create /include symlink to /usr/include so the path resolves
+          OCIO_CONFIG=$(find /usr -name "OpenColorIOConfig.cmake" 2>/dev/null | head -1)
+          if [ -n "$OCIO_CONFIG" ]; then
+            echo "OpenColorIO config: $OCIO_CONFIG"
+            # Check if it references the broken "/include" path
+            if grep -q '"/include"' "$OCIO_CONFIG" 2>/dev/null; then
+              echo "Fixing broken /include path in OpenColorIO config..."
+              sudo sed -i 's|"/include"|"/usr/include"|g' "$OCIO_CONFIG"
+              echo "Fixed."
+            fi
+          fi
 
           # ── Locate cmake config files ──
           echo ""
@@ -160,14 +177,6 @@ jobs:
           find /usr -name "OpenColorIOConfig.cmake" 2>/dev/null | head -3
           echo "Embree:"
           find /usr -name "embree-config.cmake" -o -name "EmbreeConfig.cmake" 2>/dev/null | head -3
-          echo "Eigen3:"
-          find /usr -name "Eigen3Config.cmake" -o -name "eigen3-config.cmake" 2>/dev/null | head -3
-          echo "Ceres:"
-          find /usr -name "CeresConfig.cmake" -o -name "ceres-config.cmake" 2>/dev/null | head -3
-          echo "TBB:"
-          find /usr -name "TBBConfig.cmake" -o -name "tbb-config.cmake" 2>/dev/null | head -3
-          echo "OpenVDB:"
-          find /usr -name "OpenVDBConfig.cmake" 2>/dev/null | head -3
           echo ""
 
       - name: Setup Python 3.13
@@ -186,18 +195,6 @@ jobs:
           set -o pipefail
           cd blender
 
-          # Locate system cmake configs for OIIO/OCIO
-          # On Ubuntu 24.04, OpenColorIO is at /usr/share/cmake/ without <Name>/ subdirectory
-          OCIO_DIR=$(find /usr -name "OpenColorIOConfig.cmake" -exec dirname {} \; 2>/dev/null | head -1)
-          OIIO_DIR=$(find /usr -name "OpenImageIOConfig.cmake" -exec dirname {} \; 2>/dev/null | head -1)
-          echo "OpenColorIO_DIR=$OCIO_DIR"
-          echo "OpenImageIO_DIR=$OIIO_DIR"
-
-          # Build a CMAKE_PREFIX_PATH from all system cmake dirs
-          # This gets forwarded to host_tools via our patched host_tools.cmake
-          PREFIX_PATHS=$(find /usr/lib /usr/share -maxdepth 4 -name "cmake" -type d 2>/dev/null | tr '\n' ':' | sed 's/:$//')
-          echo "CMAKE_PREFIX_PATH=$PREFIX_PATHS"
-
           cmake -B build \
             -S . \
             -DCMAKE_TOOLCHAIN_FILE=build_files/cmake/platform/platform_android_toolchain.cmake \
@@ -211,9 +208,6 @@ jobs:
             -DPYTHON_VERSION=3.13 \
             -DPYTHON_EXECUTABLE=$(which python3) \
             -DTEST_PYTHON_EXE=$(which python3) \
-            -DOpenColorIO_DIR="$OCIO_DIR" \
-            -DOpenImageIO_DIR="$OIIO_DIR" \
-            -DCMAKE_PREFIX_PATH="$PREFIX_PATHS" \
             -GNinja 2>&1 | tee cmake_config.log
 
       - name: Handle CMake failure
