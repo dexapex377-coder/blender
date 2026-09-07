@@ -77,6 +77,7 @@ jobs:
             -C build_files/cmake/config/blender_release.cmake \
             -DWITH_TESTS=OFF \
             -DWITH_PYTHON_INSTALL=OFF \
+            -DWITH_CYCLES_OSL=OFF \
           -DTEST_PYTHON_EXE=/usr/bin/python3 \
             -GNinja 2>&1 | tee cmake_config.log
 
