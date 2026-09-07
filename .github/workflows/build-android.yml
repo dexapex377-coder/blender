@@ -152,9 +152,19 @@ jobs:
           CMAKE_PREFIX_PATH: /usr/share/cmake:/usr/lib/x86_64-linux-gnu/cmake
         run: |
           set -o pipefail
-          echo "=== Testing OpenColorIO with CMAKE_PREFIX_PATH ==="
-          cmake --version | head -1
-          find /usr -iname "OpenColorIOConfig.cmake" 2>/dev/null
+          echo "=== Fix broken OpenImageIO/ColorIO cmake configs ==="
+          OIIO_CMAKE=/usr/lib/x86_64-linux-gnu/cmake/OpenImageIO/OpenImageIOConfig.cmake
+          OCIO_CMAKE=/usr/share/cmake/OpenColorIOConfig.cmake
+          if grep -q 'opencv4' "$OIIO_CMAKE" 2>/dev/null; then
+            echo "Patching OpenImageIO cmake to remove opencv4 ref"
+            sudo sed -i 's|/usr/include/opencv4||g; s|/usr/include/opencv4/| |g' "$OIIO_CMAKE"
+            echo "OpenImageIO patched:"
+            grep -n 'opencv' "$OIIO_CMAKE" 2>/dev/null || echo "  No opencv refs remaining"
+          fi
+          if grep -q '/include' "$OCIO_CMAKE" 2>/dev/null; then
+            echo "Patching OpenColorIO cmake to fix relative include path"
+            sudo sed -i 's|-I/include|-I/usr/include|g; s|-L/lib|-L/usr/lib/x86_64-linux-gnu|g' "$OCIO_CMAKE"
+          fi
           cd blender
           cmake --build build --target install 2>&1 | tee build.log
           cmake --build build --target gradle_stage 2>&1 | tee gradle_stage.log
