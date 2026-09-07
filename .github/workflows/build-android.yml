@@ -78,31 +78,22 @@ jobs:
           gcc --version
           g++ --version
 
-      - name: Fix shaderc pkg-config
+      - name: Debug shaderc (temporary)
         run: |
           set -o pipefail
-          PKGCONF=/usr/lib/aarch64-linux-gnu/pkgconfig
-          if [ -f "$PKGCONF/shaderc_combined.pc" ]; then
-            echo "Found shaderc_combined.pc — replacing shaderc.pc"
-            sudo cp "$PKGCONF/shaderc_combined.pc" "$PKGCONF/shaderc.pc"
-          fi
-          if [ -f "$PKGCONF/shaderc.pc" ]; then
-            echo "shaderc.pc content:"
-            cat "$PKGCONF/shaderc.pc"
-          else
-            echo "ERROR: shaderc.pc not found, creating manually"
-            echo 'prefix=/usr' | sudo tee "$PKGCONF/shaderc.pc"
-            echo 'exec_prefix=${prefix}' | sudo tee -a "$PKGCONF/shaderc.pc"
-            echo 'libdir=${prefix}/lib/aarch64-linux-gnu' | sudo tee -a "$PKGCONF/shaderc.pc"
-            echo 'includedir=${prefix}/include' | sudo tee -a "$PKGCONF/shaderc.pc"
-            echo 'Name: shaderc' | sudo tee -a "$PKGCONF/shaderc.pc"
-            echo 'Description: Shaderc shader compiler library' | sudo tee -a "$PKGCONF/shaderc.pc"
-            echo 'Version: 2023.8.1' | sudo tee -a "$PKGCONF/shaderc.pc"
-            echo 'Libs: -L${libdir} -lshaderc_combined' | sudo tee -a "$PKGCONF/shaderc.pc"
-            echo 'Cflags: -I${includedir}' | sudo tee -a "$PKGCONF/shaderc.pc"
-          fi
-          pkg-config --exists shaderc && echo "shaderc.pc OK" || echo "FAIL: shaderc.pc not found"
-          pkg-config --modversion shaderc 2>/dev/null || true
+          sudo apt-get install -y libshaderc-dev
+          echo "=== dpkg -L ==="
+          dpkg -L libshaderc-dev 2>/dev/null || echo "not installed"
+          echo "=== find shaderc files ==="
+          find /usr -iname "*shaderc*" 2>/dev/null
+          echo "=== pkgconfig shaderc files ==="
+          for f in $(find /usr -iname "shaderc*.pc" 2>/dev/null); do
+            echo "--- $f ---"
+            cat "$f"
+          done
+          echo "=== uname ==="
+          uname -m
+          echo "=== done ==="
 
       - name: Configure CMake (attempt 1)
         id: cmake-attempt1
