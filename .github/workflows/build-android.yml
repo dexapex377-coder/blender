@@ -27,10 +27,7 @@ jobs:
             if [ "$SIZE" -lt 1024 ] || [ "$IS_404" = "yes" ]; then
               echo "WARNING: $f inválido (size=$SIZE, 404=$IS_404) — usando dummy"
               rm -f "$f"
-              python3 -c "
-                sz=121384 if 'startup.blend' in '$f' else 102400
-                open('$f','wb').write(b'BLENDER-v293\x00'+b'\x00'*(sz-12))
-              "
+              python3 -c "sz=121384 if 'startup' in '$f' else 102400; open('$f','wb').write(b'BLENDER-v293' + b'\x00'*(sz-12))"
             fi
           done
           REMAINING=$(git status --short | wc -l)
