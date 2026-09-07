@@ -18,6 +18,7 @@ jobs:
 
       - name: Download LFS files from parent repo
         run: |
+          set -o pipefail
           cd blender
           PARENT=https://raw.githubusercontent.com/blender/blender/android
           for f in release/datafiles/startup.blend assets/brushes/essentials_brushes-curve_sculpt.blend; do
@@ -33,13 +34,14 @@ jobs:
           REMAINING=$(git status --short | wc -l)
           echo "Remaining files: $REMAINING"
           if [ "$REMAINING" -gt 2 ]; then
-            echo "ERROR: more than 1 file remaining"
+            echo "ERROR: more than 2 files remaining"
             git status --short
             exit 1
           fi
 
       - name: Clone precompiled libs
         run: |
+          set -o pipefail
           git clone --depth 1 https://projects.blender.org/blender/lib-android_arm64.git blender/lib/android_arm64
           cd blender/lib/android_arm64
           git lfs install
@@ -47,6 +49,7 @@ jobs:
 
       - name: Verify zstd
         run: |
+          set -o pipefail
           SIZE=$(stat -c%s blender/lib/android_arm64/zstd/lib/libzstd.a 2>/dev/null || echo 0)
           echo "zstd.a size: $SIZE bytes"
           if [ "$SIZE" -lt 1000 ]; then
@@ -64,6 +67,7 @@ jobs:
       - name: Configure CMake (attempt 1)
         id: cmake-attempt1
         run: |
+          set -o pipefail
           cd blender
           cmake -B build \
             -S . \
@@ -78,6 +82,7 @@ jobs:
       - name: Handle CMake failure
         if: steps.cmake-attempt1.outcome == 'failure'
         run: |
+          set -o pipefail
           if grep -q "_LIBCPP_USING_IF_EXISTS\|incomplete type 'tm'" cmake_config.log 2>/dev/null; then
             echo "ctime/tm error detected — STOPPING for diagnosis"
             cat cmake_config.log
@@ -91,12 +96,14 @@ jobs:
       - name: Build and stage Gradle
         if: steps.cmake-attempt1.outcome == 'success'
         run: |
+          set -o pipefail
           cd blender
           cmake --build build --target install 2>&1 | tee build.log
           cmake --build build --target gradle_stage 2>&1 | tee gradle_stage.log
 
       - name: Assemble APK
         run: |
+          set -o pipefail
           cd blender/build/gradle
           chmod +x gradlew
           ./gradlew assembleRelease \
