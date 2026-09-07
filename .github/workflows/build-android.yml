@@ -1,0 +1,116 @@
+name: Android APK Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this repository
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          path: blender
+          lfs: false
+
+      - name: Configure LFS to use parent repo
+        run: |
+          cd blender
+          git config lfs.fetchexclude "assets/brushes/essentials_brushes-curve_sculpt.blend"
+          git lfs install --local
+          git remote add blender https://github.com/blender/blender.git 2>/dev/null || true
+          git lfs pull blender main 2>/dev/null || git lfs pull origin main
+          git restore --source=HEAD :/
+          REMAINING=$(git status --short | wc -l)
+          echo "Remaining files: $REMAINING"
+          if [ "$REMAINING" -gt 1 ]; then
+            echo "ERROR: more than 1 file remaining"
+            git status --short
+            exit 1
+          fi
+
+      - name: Clone precompiled libs
+        run: |
+          git clone --depth 1 https://projects.blender.org/blender/lib-android_arm64.git blender/lib/android_arm64
+          cd blender/lib/android_arm64
+          git lfs install
+          git lfs pull
+
+      - name: Verify zstd
+        run: |
+          SIZE=$(stat -c%s blender/lib/android_arm64/zstd/lib/libzstd.a 2>/dev/null || echo 0)
+          echo "zstd.a size: $SIZE bytes"
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "ERROR: zstd is a LFS pointer"
+            exit 1
+          fi
+          echo "zstd OK"
+
+      - name: Setup NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+
+      - name: Configure CMake (attempt 1)
+        id: cmake-attempt1
+        continue-on-error: true
+        run: |
+          cd blender
+          cmake -B build \
+            -S . \
+            -DCMAKE_TOOLCHAIN_FILE=build_files/cmake/platform/platform_android_toolchain.cmake \
+            -DANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }} \
+            -DCMAKE_INSTALL_PREFIX=install \
+            -C build_files/cmake/config/blender_release.cmake \
+            -GNinja 2>&1 | tee cmake_config.log
+
+      - name: Handle CMake failure
+        if: steps.cmake-attempt1.outcome == 'failure'
+        run: |
+          if grep -q "_LIBCPP_USING_IF_EXISTS\|incomplete type 'tm'" cmake_config.log 2>/dev/null; then
+            echo "ctime/tm error detected — STOPPING for diagnosis"
+            cat cmake_config.log
+            exit 1
+          else
+            echo "CMake failed with different error"
+            cat cmake_config.log
+            exit 1
+          fi
+
+      - name: Build
+        run: |
+          cd blender
+          cmake --build build --target install 2>&1 | tee build.log
+
+      - name: Assemble APK
+        run: |
+          cd blender/build/gradle
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -PblenderVersionName=5.2.0 \
+            -PblenderVersionCode=5020000 \
+            -PblenderMinSdk=29 2>&1 | tee gradle.log
+
+      - name: Find APK
+        id: find-apk
+        run: |
+          APK=$(find blender/build/gradle -name "app-release.apk" 2>/dev/null | head -1)
+          echo "apk_path=$APK" >> $GITHUB_OUTPUT
+
+      - name: Upload APK
+        if: steps.find-apk.outputs.apk_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-android-apk
+          path: ${{ steps.find-apk.outputs.apk_path }}
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: cmake_config*.log build.log gradle.log
+          if-no-files-found: ignore
