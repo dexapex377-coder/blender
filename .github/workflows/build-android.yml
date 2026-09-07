@@ -64,11 +64,11 @@ jobs:
         with:
           ndk-version: r26d
 
-      - name: Install GCC 14
+      - name: Install GCC 14 and system deps for host_tools
         run: |
           set -o pipefail
           sudo apt-get update
-          sudo apt-get install -y gcc-14 g++-14
+          sudo apt-get install -y gcc-14 g++-14 libjpeg-dev libpng-dev zlib1g-dev libzstd-dev libepoxy-dev libfmt-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
           gcc --version
