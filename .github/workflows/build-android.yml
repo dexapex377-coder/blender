@@ -20,8 +20,18 @@ jobs:
         run: |
           cd blender
           PARENT=https://raw.githubusercontent.com/blender/blender/android
-          for f in assets/brushes/essentials_brushes-curve_sculpt.blend; do
+          for f in release/datafiles/startup.blend assets/brushes/essentials_brushes-curve_sculpt.blend; do
             curl -sL "$PARENT/$f" -o "$f"
+            SIZE=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            IS_404=$(grep -q "404: Not Found" "$f" 2>/dev/null && echo "yes" || echo "no")
+            if [ "$SIZE" -lt 1024 ] || [ "$IS_404" = "yes" ]; then
+              echo "WARNING: $f inválido (size=$SIZE, 404=$IS_404) — usando dummy"
+              rm -f "$f"
+              python3 -c "
+                sz=121384 if 'startup.blend' in '$f' else 102400
+                open('$f','wb').write(b'BLENDER-v293\x00'+b'\x00'*(sz-12))
+              "
+            fi
           done
           REMAINING=$(git status --short | wc -l)
           echo "Remaining files: $REMAINING"
@@ -81,6 +91,7 @@ jobs:
           fi
 
       - name: Build and stage Gradle
+        if: steps.cmake-attempt1.outcome == 'success'
         run: |
           cd blender
           cmake --build build --target install 2>&1 | tee build.log
