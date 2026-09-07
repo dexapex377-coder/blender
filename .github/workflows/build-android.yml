@@ -8,13 +8,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout this repository (android branch)
+      - name: Checkout this repository (android branch, no LFS)
         id: checkout
         uses: actions/checkout@v4
         with:
           path: blender
           ref: android
-          lfs: true
+          lfs: false
+
+      - name: Download LFS files from parent repo
+        run: |
+          cd blender
+          PARENT=https://raw.githubusercontent.com/blender/blender/android
+          for f in assets/brushes/essentials_brushes-curve_sculpt.blend; do
+            curl -sL "$PARENT/$f" -o "$f"
+          done
+          REMAINING=$(git status --short | wc -l)
+          echo "Remaining files: $REMAINING"
+          if [ "$REMAINING" -gt 1 ]; then
+            echo "ERROR: more than 1 file remaining"
+            git status --short
+            exit 1
+          fi
 
       - name: Clone precompiled libs
         run: |
