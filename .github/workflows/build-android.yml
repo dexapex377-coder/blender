@@ -143,8 +143,13 @@ jobs:
 
       - name: Build and stage Gradle
         if: steps.cmake-attempt1.outcome == 'success'
+        env:
+          CMAKE_PREFIX_PATH: /usr/share/cmake
         run: |
           set -o pipefail
+          echo "=== Testing OpenColorIO with CMAKE_PREFIX_PATH ==="
+          cmake --version | head -1
+          find /usr -iname "OpenColorIOConfig.cmake" 2>/dev/null
           cd blender
           cmake --build build --target install 2>&1 | tee build.log
           cmake --build build --target gradle_stage 2>&1 | tee gradle_stage.log
