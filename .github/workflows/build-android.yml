@@ -161,27 +161,34 @@ jobs:
 
           # ── Fix broken OCIO cmake config: references "/include" which doesn't exist ──
           # Ubuntu's libopencolorio-dev has a broken INTERFACE_INCLUDE_DIRECTORIES="/include"
+          echo "=== Fixing ALL OpenColorIO cmake files ==="
+          for f in $(find /usr -name "OpenColorIO*.cmake" 2>/dev/null); do
+            if grep -q '"/include"' "$f" 2>/dev/null; then
+              echo "  Fixing: $f"
+              sudo sed -i 's|"/include"|"/usr/include"|g' "$f"
+            fi
+          done
+
+          # Ensure cmake can find OCIO at standard path: <prefix>/cmake/OpenColorIO/<Name>Config.cmake
           OCIO_CONFIG=$(find /usr -name "OpenColorIOConfig.cmake" 2>/dev/null | head -1)
           if [ -n "$OCIO_CONFIG" ]; then
-            echo "OpenColorIO config: $OCIO_CONFIG"
-            # Fix broken /include path
-            if grep -q '"/include"' "$OCIO_CONFIG" 2>/dev/null; then
-              echo "Fixing broken /include path in OpenColorIO config..."
-              sudo sed -i 's|"/include"|"/usr/include"|g' "$OCIO_CONFIG"
-            fi
-            # Ensure cmake can find it at standard path: <prefix>/cmake/OpenColorIO/OpenColorIOConfig.cmake
             OCIO_CMAKE_DIR=$(dirname "$OCIO_CONFIG")
             STANDARD_DIR="/usr/share/cmake/OpenColorIO"
             if [ "$OCIO_CMAKE_DIR" != "$STANDARD_DIR" ]; then
-              echo "Creating standard cmake path for OpenColorIO: $STANDARD_DIR"
+              echo "Creating standard cmake path: $STANDARD_DIR"
               sudo mkdir -p "$STANDARD_DIR"
-              sudo ln -sf "$OCIO_CONFIG" "$STANDARD_DIR/"
-              # Also link version file if it exists
+              sudo cp -f "$OCIO_CONFIG" "$STANDARD_DIR/"
               VERSION_FILE=$(find /usr -name "OpenColorIOConfigVersion.cmake" 2>/dev/null | head -1)
-              [ -n "$VERSION_FILE" ] && sudo ln -sf "$VERSION_FILE" "$STANDARD_DIR/"
-              # Also link Targets files
+              [ -n "$VERSION_FILE" ] && sudo cp -f "$VERSION_FILE" "$STANDARD_DIR/"
               for f in $(find /usr -name "OpenColorIOTargets*.cmake" 2>/dev/null); do
-                sudo ln -sf "$f" "$STANDARD_DIR/"
+                sudo cp -f "$f" "$STANDARD_DIR/"
+              done
+              # Fix the copied files too
+              for f in "$STANDARD_DIR"/*.cmake; do
+                if grep -q '"/include"' "$f" 2>/dev/null; then
+                  echo "  Fixing copy: $f"
+                  sudo sed -i 's|"/include"|"/usr/include"|g' "$f"
+                fi
               done
             fi
           fi
