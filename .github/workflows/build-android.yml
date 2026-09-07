@@ -120,6 +120,7 @@ jobs:
             -DWITH_TESTS=OFF \
             -DWITH_PYTHON_INSTALL=OFF \
             -DWITH_CYCLES_OSL=OFF \
+            -DOpenColorIO_DIR=/usr/share/cmake \
             -DPYTHON_VERSION=3.13 \
             -DPYTHON_EXECUTABLE=$(which python3) \
             -DTEST_PYTHON_EXE=$(which python3) \
