@@ -72,27 +72,24 @@ jobs:
             libjpeg-dev libpng-dev zlib1g-dev libzstd-dev libepoxy-dev libfmt-dev \
             libfreetype6-dev libtiff-dev libwebp-dev libopenexr-dev libgl1-mesa-dev \
             libvulkan-dev mesa-vulkan-drivers vulkan-tools \
-            libshaderc-dev
+            libshaderc-dev \
+            libopenimageio-dev libopencolorio-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
           gcc --version
           g++ --version
 
-      - name: Debug shaderc (temporary)
+      - name: Verify OIIO and OCIO .cmake files
         run: |
           set -o pipefail
-          sudo apt-get install -y libshaderc-dev
-          echo "=== dpkg -L ==="
-          dpkg -L libshaderc-dev 2>/dev/null || echo "not installed"
-          echo "=== find shaderc files ==="
-          find /usr -iname "*shaderc*" 2>/dev/null
-          echo "=== pkgconfig shaderc files ==="
-          for f in $(find /usr -iname "shaderc*.pc" 2>/dev/null); do
-            echo "--- $f ---"
-            cat "$f"
-          done
-          echo "=== uname ==="
-          uname -m
+          echo "=== OpenImageIO .cmake files ==="
+          find /usr -iname "*OpenImageIOConfig.cmake" -o -iname "*openimageio-config.cmake" 2>/dev/null
+          dpkg -L libopenimageio-dev 2>/dev/null | grep -i cmake | head -5
+          echo "=== OpenColorIO .cmake files ==="
+          find /usr -iname "*OpenColorIOConfig.cmake" -o -iname "*opencolorio-config.cmake" 2>/dev/null
+          dpkg -L libopencolorio-dev 2>/dev/null | grep -i cmake | head -5
+          echo "=== shaderc .pc files ==="
+          find /usr -iname "shaderc*.pc" 2>/dev/null | xargs -I{} sh -c 'echo "--- {} ---"; cat {}'
           echo "=== done ==="
 
       - name: Setup Python 3.13
