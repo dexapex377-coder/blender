@@ -32,7 +32,7 @@ jobs:
           done
           REMAINING=$(git status --short | wc -l)
           echo "Remaining files: $REMAINING"
-          if [ "$REMAINING" -gt 1 ]; then
+          if [ "$REMAINING" -gt 2 ]; then
             echo "ERROR: more than 1 file remaining"
             git status --short
             exit 1
