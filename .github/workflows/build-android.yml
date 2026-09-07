@@ -74,7 +74,8 @@ jobs:
             libvulkan-dev mesa-vulkan-drivers vulkan-tools \
             libshaderc-dev \
             libopenimageio-dev openimageio-tools \
-            libopencolorio-dev
+            libopencolorio-dev \
+            libembree-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
           gcc --version
@@ -144,7 +145,7 @@ jobs:
       - name: Build and stage Gradle
         if: steps.cmake-attempt1.outcome == 'success'
         env:
-          CMAKE_PREFIX_PATH: /usr/share/cmake
+          CMAKE_PREFIX_PATH: /usr/share/cmake:/usr/lib/x86_64-linux-gnu/cmake
         run: |
           set -o pipefail
           echo "=== Testing OpenColorIO with CMAKE_PREFIX_PATH ==="
