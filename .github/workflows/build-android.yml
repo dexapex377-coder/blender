@@ -129,6 +129,7 @@ jobs:
             -DPYTHON_EXECUTABLE=$(which python3) \
             -DTEST_PYTHON_EXE=$(which python3) \
             -DWITH_X11_XINPUT=OFF \
+            -DWITH_GHOST_X11=OFF \
             -GNinja 2>&1 | tee cmake_config.log
 
       - name: Handle CMake failure
