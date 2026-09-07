@@ -73,6 +73,7 @@ jobs:
             libfreetype6-dev libtiff-dev libwebp-dev libopenexr-dev libgl1-mesa-dev \
             libvulkan-dev mesa-vulkan-drivers vulkan-tools \
             libshaderc-dev
+            libshaderc-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
           gcc --version
