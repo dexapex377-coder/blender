@@ -95,6 +95,21 @@ jobs:
           uname -m
           echo "=== done ==="
 
+      - name: Debug Python versions
+        run: |
+          echo "=== available python3 ==="
+          ls /usr/bin/python3* 2>/dev/null || echo "none in /usr/bin"
+          echo "=== /opt/hostedtoolcache/Python/ ==="
+          ls /opt/hostedtoolcache/Python/ 2>/dev/null || echo "none"
+          echo "=== which python3 ==="
+          which python3 2>/dev/null || echo "not found"
+          python3 --version 2>/dev/null || echo "no default"
+          echo "=== python3.13 ==="
+          which python3.13 2>/dev/null || echo "not in PATH"
+          python3.13 --version 2>/dev/null || echo "no executable"
+          echo "=== cmake PYTHON vars ==="
+          cmake --version | head -1
+
       - name: Configure CMake (attempt 1)
         id: cmake-attempt1
         run: |
