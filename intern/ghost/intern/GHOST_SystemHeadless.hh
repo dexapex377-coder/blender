@@ -232,4 +232,14 @@ class GHOST_SystemHeadless : public GHOST_System {
   {
     return nullptr;
   }
+
+  GHOST_TSuccess popupOnScreenKeyboard(GHOST_IWindow * /*window*/) override
+  {
+    return GHOST_kFailure;
+  }
+
+  GHOST_TSuccess hideOnScreenKeyboard(GHOST_IWindow * /*window*/) override
+  {
+    return GHOST_kFailure;
+  }
 };
