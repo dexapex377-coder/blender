@@ -251,8 +251,11 @@ jobs:
       - name: Extract staged Gradle project
         run: |
           set -o pipefail
+          # download-artifact@v4 unzips the artifact contents directly into $GITHUB_WORKSPACE
+          # (no subfolder for single artifacts), so the tarball lands in the workspace root.
+          ls -la
           mkdir -p stage
-          tar -I zstd -xf gradle-stage/gradle-stage.tar.zst -C stage
+          tar -I zstd -xf gradle-stage.tar.zst -C stage
           chmod +x stage/gradle/gradlew
           echo "Staged layout:"
           ls stage/gradle
@@ -339,5 +342,5 @@ jobs:
           name: gradle-logs
           path: |
             stage/gradle/gradle.log
-            gradle-stage/gradle-stage.tar.zst
+            gradle-stage.tar.zst
           if-no-files-found: ignore
