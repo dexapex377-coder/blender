@@ -159,6 +159,31 @@ elseif(WITH_GHOST_SDL)
   list(APPEND LIB
     bf::dependencies::optional::sdl
   )
+elseif(WITH_GHOST_ANDROID)
+  list(APPEND SRC
+    intern/GHOST_AndroidMain.cc
+    intern/GHOST_SystemAndroid.cc
+    intern/GHOST_SystemPathsAndroid.cc
+    intern/GHOST_WindowAndroid.cc
+
+    intern/GHOST_SystemAndroid.hh
+    intern/GHOST_SystemPathsAndroid.hh
+    intern/GHOST_WindowAndroid.hh
+  )
+  add_definitions(-DWITH_GHOST_ANDROID)
+
+  # NativeActivity glue ships with the NDK as source.
+  list(APPEND SRC
+    ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
+  )
+  list(APPEND INC_SYS
+    ${ANDROID_NDK}/sources/android/native_app_glue
+  )
+  list(APPEND LIB
+    android
+    log
+  )
+
 elseif(APPLE AND NOT WITH_GHOST_X11)
   list(APPEND SRC
     intern/GHOST_SystemCocoa.mm

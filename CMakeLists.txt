@@ -338,8 +338,12 @@ option(WITH_GHOST_DEBUG "Enable debugging output for the GHOST library" OFF)
 mark_as_advanced(WITH_GHOST_DEBUG)
 
 if(ANDROID)
-  # Currently SDL is the only supported GHOST backend for Android, unconditionally enable.
-  set(WITH_GHOST_SDL ON)
+  # Android uses the NativeActivity GHOST backend (GHOST_SystemAndroid), matching
+  # upstream Blender before the SDL-based port. The define is global so the creator
+  # entry point (creator.cc) also compiles the GHOST_android_launch path.
+  set(WITH_GHOST_SDL OFF)
+  set(WITH_GHOST_ANDROID ON)
+  add_definitions(-DWITH_GHOST_ANDROID)
 else()
   option(WITH_GHOST_SDL "\
 Enable building Blender against SDL for windowing rather than the native APIs"

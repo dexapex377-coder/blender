@@ -52,3 +52,31 @@
 
 **Commits/workflow**: Solo `.github/workflows/build-android.yml` (android + main).
 
+
+## F1 (en curso): swap backend SDL → GHOST NativeActivity de Wanderson
+
+- **Estado**: 8 archivos GHOST de Wanderson copiados a `intern/ghost/intern/` (GHOST_AndroidMain.cc,
+  GHOST_SystemAndroid.(c|h)h, GHOST_WindowAndroid.(c|h)h, GHOST_SystemPathsAndroid.(c|h)h,
+  GHOST_AndroidMemoryTier.hh). Edits C++/CMake/gradle/Java/manifest aplicados (GShoWN arriba).
+- **Cambios de la rama android** (commits F1):
+  1. `CMakeLists.txt` (top): rama `ANDROID` → `WITH_GHOST_SDL=OFF` + `WITH_GHOST_ANDROID=ON` + `add_definitions`.
+  2. `intern/ghost/CMakeLists.txt`: rama `elseif(WITH_GHOST_ANDROID)` con los 8 archivos, glue
+     `android_native_app_glue.c` + `INC_SYS` desde `${ANDROID_NDK_ROOT}`, libs `android`+`log`.
+  3. `source/creator/creator.cc`: `#ifdef WITH_GHOST_ANDROID` → `GHOST_android_launch(argc,argv)`
+     (reemplaza `main`) con `WM_main_entry`→`GHOST_androidfinalize`; rama else sin cambios.
+  4. `source/creator/CMakeLists.txt`: rama `ANDROID` → `add_library(blender SHARED ${SRC})` + `-Wl,-u,ANativeActivity_onCreate` (sin SDL, sin creator_android.cc).
+  5. `source/blender/windowmanager/WM_api.hh` + `intern/wm.cc`: refactor `WM_main` →
+     `WM_main_entry` + `WM_main_loop_body` (igual que Wanderson).
+  6. `release/android/app/.../BlenderActivity.java`: `extends NativeActivity`, extrae
+     `assets/extract/**` → `<filesDir>/blender/5.3` (stamp lastUpdateTime), IME bridge
+     (nativeOnCommitText/nativeOnKey/nativeOpenMainFile), open-file resolve + BLENDER_ANDROID_OPEN_FILE,
+     `openUrl`/`showKeyboard`/`hideKeyboard` (llamadas desde C++), python interpreter link +
+     `PYTHONHOME`/`pyvenv.cfg`/`LD_LIBRARY_PATH`, hardware names, immersive + all-files access.
+  7. `AndroidManifest.xml`: permiso `MANAGE_EXTERNAL_STORAGE` + `<meta-data android.app.lib_name=blender>`
+     (NativeActivity). Se mantiene `launchMode="singleInstance"`, `configChanges` y orientation actuales.
+  8. `build-android.yml`: `WITH_PYTHON_INSTALL` OFF→ON (alinea con rama main; la app crashea sin python en el runtime).
+- **Contrato de rutas**: `GHOST_SystemPathsAndroid` lee `internalDataPath` (no envs). System dir =
+  `<filesDir>/blender/5.3` (datafiles/scripts/python). getSystemLibsDir también apunta ahí.
+- **Punto de control pendiente**: commit + push rama android; disparar build-android.yml; si compila,
+  cerrar F1 y pasar a F2.
+

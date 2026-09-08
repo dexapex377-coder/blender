@@ -166,6 +166,16 @@ void WM_exit(bContext *C, int exit_code) ATTR_NORETURN;
 void WM_main(bContext *C) ATTR_NORETURN;
 
 /**
+ * Run one iteration of the main event loop plus the initial refresh.
+ *
+ * Used by the Android NativeActivity loop: call #WM_main_entry once at launch, then
+ * #WM_main_loop_body once per frame from the platform's render loop.
+ * #WM_main is the combination of the two, looping forever on regular platforms.
+ */
+void WM_main_entry(bContext *C);
+void WM_main_loop_body(bContext *C);
+
+/**
  * Show the splash screen as needed on startup.
  *
  * The splash may not show depending on a file being loaded and user preferences.

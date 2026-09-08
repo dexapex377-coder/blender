@@ -23,6 +23,12 @@
     <!-- Network permission, used for both user online access and Tracy remote profiling. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Blender reads and writes .blend files and their assets by path, so it needs access to
+         shared storage rather than the scoped, app-private sandbox (all-files access). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
     <application android:label="@string/app_name"
                  android:icon="@mipmap/ic_launcher"
                  android:roundIcon="@mipmap/ic_launcher_round"
@@ -57,6 +63,9 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:scheme="content" android:mimeType="application/octet-stream"/>
             </intent-filter>
+        <!-- Load libblender.so via the NDK's native_app_glue, which is what makes
+                 BlenderActivity (a NativeActivity subclass) start android_main(). -->
+            <meta-data android:name="android.app.lib_name" android:value="blender"/>
         </activity>
     </application>
 

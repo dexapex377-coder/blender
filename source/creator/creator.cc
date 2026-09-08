@@ -6,6 +6,7 @@
  * \ingroup creator
  */
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -327,10 +328,13 @@ extern "C" int GHOST_HACK_getFirstFile(char buf[]);
  * - run #WM_main() event loop,
  *   or exit immediately when running in background-mode.
  */
-#ifdef __ANDROID__
-/* On Android, the creator entry point is defined in creator_android.cc, handled by SDL_main
- * and called by the Android BlenderActivity (subclass of SDLActivity). */
-int creator_main(int argc, const char **argv)
+#ifdef WITH_GHOST_ANDROID
+/* Android owns the frame loop; the NativeActivity glue calls this to init. */
+namespace blender {
+void GHOST_androidfinalize(bContext *C);
+int GHOST_android_launch(int argc, const char **argv);
+}  // namespace blender
+int blender::GHOST_android_launch(int argc, const char **argv)
 {
 #else
 int main(int argc,
@@ -676,8 +680,17 @@ int main(int argc,
     /* Shows the splash as needed. */
     WM_init_splash_on_startup(C);
 
+#ifdef WITH_GHOST_ANDROID
+    /* Return to the NativeActivity loop, which drives WM_main_loop_body. */
+    WM_main_entry(C);
+    fprintf(stderr, "[BlenderAndroid] creator: event loop ready\n");
+    fflush(stderr);
+    GHOST_androidfinalize(C);
+  }
+#else
     WM_main(C);
   }
+#endif
   /* Neither #WM_exit, #WM_main return, this quiets CLANG's `unreachable-code-return` warning. */
   BLI_assert_unreachable();
 
