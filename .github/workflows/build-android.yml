@@ -78,7 +78,26 @@ jobs:
           git status --short | head -20
           echo "Required LFS files verified OK."
 
+      - name: Resolve precompiled libs commit IDs
+        id: libs-commit
+        run: |
+          echo "arm=$(git ls-remote https://projects.blender.org/blender/lib-android_arm64.git HEAD | cut -f1)" >> $GITHUB_OUTPUT
+          echo "x64=$(git ls-remote https://projects.blender.org/blender/lib-linux_x64.git HEAD | cut -f1)" >> $GITHUB_OUTPUT
+
+      - uses: actions/cache/restore@v4
+        id: cache-libs-android
+        with:
+          path: blender/lib/android_arm64
+          key: libs-android-${{ steps.libs-commit.outputs.arm }}
+
+      - uses: actions/cache/restore@v4
+        id: cache-libs-x64
+        with:
+          path: blender/lib/linux_x64
+          key: libs-x64-${{ steps.libs-commit.outputs.x64 }}
+
       - name: Clone precompiled libs (Android ARM64 — target build)
+        if: steps.cache-libs-android.outputs.cache-hit != 'true'
         run: |
           set -o pipefail
           git clone --depth 1 https://projects.blender.org/blender/lib-android_arm64.git blender/lib/android_arm64
@@ -87,12 +106,25 @@ jobs:
           git lfs pull
 
       - name: Clone precompiled libs (Linux x64 — host_tools)
+        if: steps.cache-libs-x64.outputs.cache-hit != 'true'
         run: |
           set -o pipefail
           git clone --depth 1 https://projects.blender.org/blender/lib-linux_x64.git blender/lib/linux_x64
           cd blender/lib/linux_x64
           git lfs install
           git lfs pull
+
+      - uses: actions/cache/save@v4
+        if: steps.cache-libs-android.outputs.cache-hit != 'true'
+        with:
+          path: blender/lib/android_arm64
+          key: libs-android-${{ steps.libs-commit.outputs.arm }}
+
+      - uses: actions/cache/save@v4
+        if: steps.cache-libs-x64.outputs.cache-hit != 'true'
+        with:
+          path: blender/lib/linux_x64
+          key: libs-x64-${{ steps.libs-commit.outputs.x64 }}
 
       - name: Verify libs
         run: |
