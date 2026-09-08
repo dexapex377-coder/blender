@@ -15,6 +15,10 @@
 #  define VK_USE_PLATFORM_WIN32_KHR
 #elif defined(__APPLE__)
 #  define VK_USE_PLATFORM_METAL_EXT
+#elif defined(__ANDROID__)
+#  ifndef VK_USE_PLATFORM_ANDROID_KHR /* Also set build-wide, so volk generates the surface loader. */
+#    define VK_USE_PLATFORM_ANDROID_KHR
+#  endif
 #else
 #  ifdef WITH_GHOST_X11
 #    define VK_USE_PLATFORM_XLIB_KHR
@@ -25,18 +29,23 @@
 #endif
 #include "volk.h"
 
-#ifdef WITH_GHOST_SDL
-#  include <SDL3/SDL_vulkan.h>
-#endif
-
 #include "GHOST_ContextVK.hh"
 #include "GHOST_Types.hh"
+
+#ifdef __ANDROID__
+#  include "GHOST_AndroidMemoryTier.hh"
+#  include <android/log.h>
+#endif
 
 #include "vulkan/vk_ghost_api.hh"
 
 #if !defined(_WIN32) or defined(_M_ARM64)
 /* Silence compilation warning on non-windows x64 systems. */
 #  define VMA_EXTERNAL_MEMORY_WIN32 0
+#endif
+/* Function pointers come from volk, and VMA tests this with #if rather than #ifdef. */
+#ifndef VMA_STATIC_VULKAN_FUNCTIONS
+#  define VMA_STATIC_VULKAN_FUNCTIONS 0
 #endif
 #include "vk_mem_alloc.h"
 
@@ -50,7 +59,6 @@
 #include <cassert>
 #include <cinttypes>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -218,12 +226,11 @@ class GHOST_DeviceVK {
   VkPhysicalDeviceVulkan12Properties properties_12 = {
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES,
   };
-  VkPhysicalDeviceDriverProperties device_driver_properties = {
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
-  };
   VkPhysicalDeviceFeatures2 features = {};
   VkPhysicalDeviceVulkan11Features features_11 = {};
   VkPhysicalDeviceVulkan12Features features_12 = {};
+  /* Only queried on a 1.3 device: asking for it on an older one is invalid. */
+  VkPhysicalDeviceVulkan13Features features_13 = {};
   VkPhysicalDeviceRobustness2FeaturesEXT features_robustness2 = {
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
   VkPhysicalDeviceAccelerationStructureFeaturesKHR features_acceleration_structure = {
@@ -243,7 +250,6 @@ class GHOST_DeviceVK {
         use_vk_ext_swapchain_colorspace(use_vk_ext_swapchain_colorspace)
   {
     properties.pNext = &properties_12;
-    properties_12.pNext = &device_driver_properties;
     volk::vkGetPhysicalDeviceProperties2(vk_physical_device, &properties);
 
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -253,6 +259,15 @@ class GHOST_DeviceVK {
     features_11.pNext = &features_12;
     features_12.pNext = &features_robustness2;
     features_robustness2.pNext = &features_acceleration_structure;
+
+    /* Dynamic rendering is core from 1.3 on, and a driver that has it in core stops
+     * advertising the extension. Without this the feature is invisible on exactly
+     * the devices that support it best. */
+    if (properties.properties.apiVersion >= VK_API_VERSION_1_3) {
+      features_13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+      features_13.pNext = features_12.pNext;
+      features_12.pNext = &features_13;
+    }
 
     volk::vkGetPhysicalDeviceFeatures2(vk_physical_device, &features);
     init_extensions();
@@ -357,21 +372,6 @@ struct GHOST_InstanceVK {
 
   GHOST_InstanceVK()
   {
-    /* volk is initialized in vk_instance_create_for_platform_checks during Vulkan backend support
-     * detection when not skipped via "--debug-gpu-backend-no-fallback". So only initialize it here
-     * as needed. */
-    if (volk::vkGetInstanceProcAddr == nullptr) {
-      VkResult vk_result = volkInitialize();
-      if (vk_result != VK_SUCCESS) {
-        CLOG_ERROR(
-            &LOG,
-            "Error initializing Vulkan loader: VkResult=%d, most likely cannot find the Vulkan "
-            "Loader provided by GPU driver/OS.",
-            vk_result);
-        /* Not recoverable when using "--debug-gpu-backend-no-fallback". */
-        exit(EXIT_FAILURE);
-      }
-    }
     init_extensions();
   }
 
@@ -397,6 +397,23 @@ struct GHOST_InstanceVK {
 
   bool create_instance(uint32_t vulkan_api_version)
   {
+    /* vkGetDeviceProcAddr returns nothing for core commands newer than the version
+     * declared here, whatever the physical device supports. Asking for 1.2 left
+     * vkCmdBeginRendering null on a 1.3 device, so dynamic rendering could not be
+     * used on the very devices that have it in core. Extensions are unaffected,
+     * which is why the KHR path on older devices never showed this. */
+    uint32_t loader_api_version = VK_API_VERSION_1_0;
+    if (volk::vkEnumerateInstanceVersion != nullptr &&
+        volk::vkEnumerateInstanceVersion(&loader_api_version) == VK_SUCCESS)
+    {
+      const uint32_t highest_known = loader_api_version < uint32_t(VK_API_VERSION_1_3) ?
+                                         loader_api_version :
+                                         uint32_t(VK_API_VERSION_1_3);
+      if (highest_known > vulkan_api_version) {
+        vulkan_api_version = highest_known;
+      }
+    }
+
     VkApplicationInfo vk_application_info = {VK_STRUCTURE_TYPE_APPLICATION_INFO,
                                              nullptr,
                                              "Blender",
@@ -414,6 +431,7 @@ struct GHOST_InstanceVK {
                                                     extensions.enabled.data()
 
     };
+
 
     VK_CHECK(volk::vkCreateInstance(&vk_instance_create_info, nullptr, &vk_instance), false);
     return true;
@@ -451,12 +469,17 @@ struct GHOST_InstanceVK {
 #ifndef __APPLE__
           !device_vk.features.features.geometryShader ||
 #endif
-          !device_vk.features.features.multiViewport ||
+          !device_vk.features.features.vertexPipelineStoresAndAtomics ||
           !device_vk.features.features.shaderClipDistance ||
           !device_vk.features.features.fragmentStoresAndAtomics ||
+          !device_vk.features.features.multiDrawIndirect ||
           !device_vk.features.features.imageCubeArray ||
-          !device_vk.features.features.dualSrcBlend || !device_vk.features.features.imageCubeArray)
+          !device_vk.features.features.dualSrcBlend ||
+          !device_vk.features.features.imageCubeArray)
       {
+        /* multiViewport and logicOp are intentionally not required: they are
+         * unavailable on many mobile GPUs (all Adreno lack logicOp) and the
+         * Vulkan backend treats them as optional. */
         continue;
       }
 
@@ -623,15 +646,16 @@ struct GHOST_InstanceVK {
 #ifndef __APPLE__
     device_features.geometryShader = VK_TRUE;
 #endif
-    device_features.vertexPipelineStoresAndAtomics =
-        device.features.features.vertexPipelineStoresAndAtomics;
-    device_features.multiViewport = VK_TRUE;
+    device_features.vertexPipelineStoresAndAtomics = VK_TRUE;
+    /* Optional on mobile GPUs; only enable when supported (else vkCreateDevice
+     * fails with VK_ERROR_FEATURE_NOT_PRESENT). */
+    device_features.multiViewport = device.features.features.multiViewport;
     device_features.shaderClipDistance = VK_TRUE;
     device_features.fragmentStoresAndAtomics = VK_TRUE;
-
+    device_features.logicOp = device.features.features.logicOp;
     device_features.dualSrcBlend = VK_TRUE;
     device_features.imageCubeArray = VK_TRUE;
-    device_features.multiDrawIndirect = device.features.features.multiDrawIndirect;
+    device_features.multiDrawIndirect = VK_TRUE;
     device_features.drawIndirectFirstInstance = VK_TRUE;
     device_features.samplerAnisotropy = device.features.features.samplerAnisotropy;
     device_features.wideLines = device.features.features.wideLines;
@@ -659,22 +683,38 @@ struct GHOST_InstanceVK {
     vulkan_12_features.shaderOutputViewportIndex = device.features_12.shaderOutputViewportIndex;
     vulkan_12_features.bufferDeviceAddress = device.features_12.bufferDeviceAddress;
     vulkan_12_features.timelineSemaphore = VK_TRUE;
+    /* Depth-only and stencil-only image layouts are invalid without this, and the backend
+     * uses them whenever it is enabled. */
+    vulkan_12_features.separateDepthStencilLayouts =
+        device.features_12.separateDepthStencilLayouts;
     feature_struct_ptr.push_back(&vulkan_12_features);
 
-    /* Enable provoking vertex if available. */
+#ifndef __APPLE__
+    /* Enable provoking vertex (optional; absent on some mobile GPUs). */
     VkPhysicalDeviceProvokingVertexFeaturesEXT provoking_vertex_features = {};
-    if (device.extensions.is_supported(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME)) {
-      provoking_vertex_features.sType =
-          VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT;
-      provoking_vertex_features.provokingVertexLast = VK_TRUE;
+    provoking_vertex_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT;
+    provoking_vertex_features.provokingVertexLast = VK_TRUE;
+    if (device.extensions.is_enabled(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME)) {
       feature_struct_ptr.push_back(&provoking_vertex_features);
     }
+#endif
 
-    /* Enable dynamic rendering. */
+    /* Enable dynamic rendering when available; Vulkan 1.1 GPUs fall back to
+     * classic render passes in the Vulkan backend. */
     VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering = {};
     dynamic_rendering.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
     dynamic_rendering.dynamicRendering = VK_TRUE;
-    feature_struct_ptr.push_back(&dynamic_rendering);
+    /* Either route enables the same feature: the extension on 1.1/1.2 devices, and
+     * the promoted core feature on 1.3 ones, where the extension is not offered. */
+    const bool core_dynamic_rendering = device.properties.properties.apiVersion >=
+                                            VK_API_VERSION_1_3 &&
+                                        device.features_13.dynamicRendering;
+    if (device.extensions.is_enabled(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME) ||
+        core_dynamic_rendering)
+    {
+      feature_struct_ptr.push_back(&dynamic_rendering);
+    }
 
     VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT
         dynamic_rendering_unused_attachments = {};
@@ -810,31 +850,9 @@ struct GHOST_InstanceVK {
     }
 
     device_create_info.pNext = feature_struct_ptr[0];
-
-    VkResult result = volk::vkCreateDevice(
-        vk_physical_device, &device_create_info, nullptr, &device.vk_device);
-
-    if (result != VK_SUCCESS) {
-#ifndef __has_feature
-#  define __has_feature(x) 0
-#endif
-#if (defined(__SANITIZE_ADDRESS__) || __has_feature(address_sanitizer)) && defined(__linux__)
-      if (device.device_driver_properties.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY) {
-        CLOG_ERROR(
-            &LOG,
-            "Vulkan: vkCreateDevice resulted in code %s.\n"
-            "Address Sanitizer has known incompatibilities with Nvidia Vulkan drivers on Linux,"
-            "see https://developer.blender.org/docs/handbook/tooling/asan/"
-            "#shadow-memory-issue-with-vulkan-on-nvidia-linux-drivers for more info.",
-            blender::gpu::to_string(result));
-        return GHOST_kFailure;
-      }
-#endif
-      CLOG_ERROR(
-          &LOG, "Vulkan: vkCreateDevice resulted in code %s.", blender::gpu::to_string(result));
-      return GHOST_kFailure;
-    }
-
+    VK_CHECK(
+        volk::vkCreateDevice(vk_physical_device, &device_create_info, nullptr, &device.vk_device),
+        GHOST_kFailure);
     volkLoadDeviceTable(&device.functions, device.vk_device);
     device.init_generic_queue();
     device.init_memory_allocator(vk_instance);
@@ -879,13 +897,12 @@ bool GHOST_ContextVK::is_device_extension_enabled(blender::StringRefNull extensi
 /** \} */
 
 GHOST_ContextVK::GHOST_ContextVK(const GHOST_ContextParams &context_params,
-#if defined(WITH_GHOST_SDL)
-                                 /* SDL */
-                                 SDL_Window *sdl_window,
-#elif defined(_WIN32)
+#ifdef _WIN32
                                  HWND hwnd,
 #elif defined(__APPLE__)
                                  void *metal_layer,
+#elif defined(__ANDROID__)
+                                 ANativeWindow *native_window,
 #else
                                  GHOST_TVulkanPlatformType platform,
                                  /* X11 */
@@ -901,13 +918,12 @@ GHOST_ContextVK::GHOST_ContextVK(const GHOST_ContextParams &context_params,
                                  const GHOST_GPUDevice &preferred_device,
                                  const GHOST_WindowHDRInfo *hdr_info)
     : GHOST_Context(context_params),
-#if defined(WITH_GHOST_SDL)
-      /* SDL */
-      sdl_window_(sdl_window),
-#elif defined(_WIN32)
+#ifdef _WIN32
       hwnd_(hwnd),
 #elif defined(__APPLE__)
       metal_layer_(metal_layer),
+#elif defined(__ANDROID__)
+      native_window_(native_window),
 #else
       platform_(platform),
       /* X11 */
@@ -976,6 +992,13 @@ GHOST_TSuccess GHOST_ContextVK::swapBufferAcquire()
   GHOST_DeviceVK &device_vk = vulkan_instance->device.value();
   VkDevice vk_device = device_vk.vk_device;
 
+#ifdef __ANDROID__
+  /* Apply a pending native-window swap here, at the synchronized swap boundary. */
+  if (android_surface_dirty_) {
+    applyAndroidSurfaceChange();
+  }
+#endif
+
   /* This method is called after all the draw calls in the application, and it signals that
    * we are ready to both (1) submit commands for those draw calls to the device and
    * (2) begin building the next frame. It is assumed as an invariant that the submission fence
@@ -1040,10 +1063,10 @@ GHOST_TSuccess GHOST_ContextVK::swapBufferAcquire()
   if (swapchain_ != VK_NULL_HANDLE) {
     /* Some platforms (NVIDIA/Wayland) can receive an out of date swapchain when acquiring the next
      * swapchain image. Other do it when calling vkQueuePresent. */
+    /* Not SUBOPTIMAL: that image is acquired and usable, so re-acquiring would leak it.
+     * Requesting an IDENTITY preTransform on a rotated display makes it permanent. */
     VkResult acquire_result = VK_ERROR_OUT_OF_DATE_KHR;
-    while (swapchain_ != VK_NULL_HANDLE &&
-           (ELEM(acquire_result, VK_ERROR_OUT_OF_DATE_KHR, VK_SUBOPTIMAL_KHR)))
-    {
+    while (swapchain_ != VK_NULL_HANDLE && acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
       acquire_result = device_vk.functions.vkAcquireNextImageKHR(
           vk_device,
           swapchain_,
@@ -1051,7 +1074,7 @@ GHOST_TSuccess GHOST_ContextVK::swapBufferAcquire()
           submission_frame_data.acquire_semaphore,
           VK_NULL_HANDLE,
           &image_index);
-      if (ELEM(acquire_result, VK_ERROR_OUT_OF_DATE_KHR, VK_SUBOPTIMAL_KHR)) {
+      if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
         recreateSwapchain(use_hdr_swapchain);
       }
     }
@@ -1188,8 +1211,16 @@ GHOST_TSuccess GHOST_ContextVK::swapBufferRelease()
   }
   acquired_swapchain_image_index_.reset();
 
-  if (ELEM(present_result, VK_ERROR_OUT_OF_DATE_KHR, VK_SUBOPTIMAL_KHR)) {
+  /* SUBOPTIMAL presented correctly, so rebuilding on it costs a swapchain every frame:
+   * an IDENTITY preTransform on a rotated display reports it forever by design. */
+  if (present_result == VK_ERROR_OUT_OF_DATE_KHR) {
     recreateSwapchain(use_hdr_swapchain);
+    return GHOST_kSuccess;
+  }
+  if (present_result == VK_SUBOPTIMAL_KHR) {
+    /* The image was presented; the swap-chain is merely not an optimal match for the
+     * surface. Permanent when preTransform is IDENTITY on a rotated display, so this
+     * must not be reported as a failure once per frame. */
     return GHOST_kSuccess;
   }
   if (present_result != VK_SUCCESS) {
@@ -1356,10 +1387,18 @@ static GHOST_TSuccess selectPresentMode(const GHOST_TVSyncModes vsync,
   /* TODO: select the correct presentation mode based on the actual being performed by the user.
    * When low latency is required (paint cursor) we should select mailbox, otherwise we can do FIFO
    * to reduce CPU/GPU usage. */
-  for (const VkPresentModeKHR present_mode : presents) {
-    if (present_mode == VK_PRESENT_MODE_MAILBOX_KHR) {
-      *r_presentMode = present_mode;
-      return GHOST_kSuccess;
+#ifdef __ANDROID__
+  /* MAILBOX needs a third full-screen swapchain image; skip it only where memory is tight. */
+  const bool prefer_double_buffering = GHOST_android_is_low_memory_device();
+#else
+  const bool prefer_double_buffering = false;
+#endif
+  if (!prefer_double_buffering) {
+    for (const VkPresentModeKHR present_mode : presents) {
+      if (present_mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+        *r_presentMode = present_mode;
+        return GHOST_kSuccess;
+      }
     }
   }
 
@@ -1451,6 +1490,11 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
 {
   GHOST_InstanceVK &instance_vk = vulkan_instance.value();
   GHOST_DeviceVK &device_vk = instance_vk.device.value();
+
+  /* No surface (e.g. Android window backgrounded); nothing to build yet. */
+  if (surface_ == VK_NULL_HANDLE) {
+    return GHOST_kFailure;
+  }
 
   surface_format_ = {};
   if (!selectSurfaceFormat(
@@ -1605,18 +1649,28 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
   create_info.imageArrayLayers = 1;
   create_info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                            (use_hdr_swapchain ? VK_IMAGE_USAGE_STORAGE_BIT : 0);
-  create_info.preTransform = capabilities.currentTransform;
-  /* Alpha lets the compositor blend the surface against the desktop, needed by CSD for rounded
-   * window corners. Not all surfaces support it, so fall back to opaque in those cases. The caller
-   * handles the lack of transparency by drawing square corners, see #GHOST_Context::hasAlpha. */
-  if (context_params_.use_alpha &&
-      (capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR))
-  {
-    create_info.compositeAlpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
-  }
-  else {
-    create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    context_params_.use_alpha = false;
+  /* Blender does not pre-rotate its rendering, so requesting the surface's
+   * currentTransform (e.g. ROTATE_90 on portrait-native tablets) would show the
+   * UI sideways. Request IDENTITY when supported and let the display compositor
+   * apply the rotation. */
+  create_info.preTransform =
+      (capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ?
+          VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR :
+          capabilities.currentTransform;
+  /* OPAQUE is not universally supported (Mesa/Turnip only offers INHERIT), so pick from what
+   * the surface actually advertises, preferring opaque compositing. */
+  const VkCompositeAlphaFlagBitsKHR composite_alpha_preference[] = {
+      VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+      VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+      VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+      VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+  };
+  create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+  for (const VkCompositeAlphaFlagBitsKHR composite_alpha : composite_alpha_preference) {
+    if (capabilities.supportedCompositeAlpha & composite_alpha) {
+      create_info.compositeAlpha = composite_alpha;
+      break;
+    }
   }
   create_info.presentMode = present_mode;
   create_info.clipped = VK_TRUE;
@@ -1625,9 +1679,19 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
   create_info.queueFamilyIndexCount = 0;
   create_info.pQueueFamilyIndices = nullptr;
 
-  VK_CHECK(device_vk.functions.vkCreateSwapchainKHR(
-               device_vk.vk_device, &create_info, nullptr, &swapchain_),
-           GHOST_kFailure);
+  VkResult create_result = device_vk.functions.vkCreateSwapchainKHR(
+      device_vk.vk_device, &create_info, nullptr, &swapchain_);
+  if (create_result != VK_SUCCESS) {
+    /* The old swapchain still owns the native window. Retire it here, else every later attempt
+     * fails with VK_ERROR_NATIVE_WINDOW_IN_USE_KHR and the window never recovers. */
+    if (old_swapchain != VK_NULL_HANDLE) {
+      discard_pile.swapchains.push_back(old_swapchain);
+    }
+    swapchain_ = VK_NULL_HANDLE;
+    CLOG_ERROR(
+        &LOG, "Vulkan: vkCreateSwapchainKHR failed [%s]", to_string(create_result).c_str());
+    return GHOST_kFailure;
+  }
 
   /* image_count may not be what we requested! Getter for final value. */
   uint32_t actual_image_count = 0;
@@ -1661,6 +1725,18 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
              actual_image_count,
              uint64_t(swapchain_),
              uint64_t(old_swapchain));
+#ifdef __ANDROID__
+  __android_log_print(ANDROID_LOG_INFO,
+                      "blender-swapchain",
+                      "extent=%ux%u present_mode=%s requested=%u acquired=%u min=%u max=%u",
+                      render_extent_.width,
+                      render_extent_.height,
+                      to_string_vk_present_mode(present_mode),
+                      image_count_requested,
+                      actual_image_count,
+                      capabilities.minImageCount,
+                      capabilities.maxImageCount);
+#endif
   /* Construct new semaphores. It can be that image_count is larger than previously. We only need
    * to fill in where the handle is `VK_NULL_HANDLE`. */
   /* Previous handles from the frame data cannot be used and should be discarded. */
@@ -1698,12 +1774,11 @@ GHOST_TSuccess GHOST_ContextVK::destroySwapchain()
 {
   GHOST_DeviceVK &device_vk = vulkan_instance.value().device.value();
 
-  device_vk.wait_idle();
   if (swapchain_ != VK_NULL_HANDLE) {
     this->destroySwapchainPresentFences(swapchain_);
     device_vk.functions.vkDestroySwapchainKHR(device_vk.vk_device, swapchain_, nullptr);
-    swapchain_ = VK_NULL_HANDLE;
   }
+  device_vk.wait_idle();
   for (GHOST_SwapchainImage &swapchain_image : swapchain_images_) {
     swapchain_image.destroy(device_vk.vk_device, device_vk.functions);
   }
@@ -1719,78 +1794,42 @@ GHOST_TSuccess GHOST_ContextVK::destroySwapchain()
   return GHOST_kSuccess;
 }
 
-#ifdef WITH_GHOST_SDL
-GHOST_TSuccess GHOST_ContextVK::recreateSurface()
+const char *GHOST_ContextVK::getPlatformSpecificSurfaceExtension() const
 {
-  GHOST_InstanceVK &instance_vk = vulkan_instance.value();
-  GHOST_DeviceVK &device_vk = instance_vk.device.value();
-
-  /* Presentation resources retain the native window used to create the surface. */
-  destroySwapchain();
-
-  if (surface_ != VK_NULL_HANDLE) {
-    volk::vkDestroySurfaceKHR(instance_vk.vk_instance, surface_, nullptr);
-    surface_ = VK_NULL_HANDLE;
-  }
-
-  /* Restore the frame used by recreateSwapchain() after destroySwapchain() cleared the vector. */
-  frame_data_.resize(2);
-  render_frame_ = 0;
-
-  if (!SDL_Vulkan_CreateSurface(sdl_window_, instance_vk.vk_instance, nullptr, &surface_)) {
-    CLOG_ERROR(&LOG, "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
-    return GHOST_kFailure;
-  }
-
-  const bool use_hdr_swapchain = hdr_info_ &&
-                                 (hdr_info_->wide_gamut_enabled || hdr_info_->hdr_enabled) &&
-                                 device_vk.use_vk_ext_swapchain_colorspace;
-  return recreateSwapchain(use_hdr_swapchain);
-}
-#endif
-
-std::vector<const char *> GHOST_ContextVK::getPlatformSpecificSurfaceExtensions() const
-{
-  std::vector<const char *> extensions;
-#if defined(WITH_GHOST_SDL)
-  /* SDL provides the set of instance extensions its window backend requires. */
-  Uint32 sdl_extension_count = 0;
-  const char *const *sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_extension_count);
-  for (Uint32 i = 0; i < sdl_extension_count; i++) {
-    extensions.push_back(sdl_extensions[i]);
-  }
-#elif defined(_WIN32)
-  extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+#ifdef _WIN32
+  return VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
 #elif defined(__APPLE__)
-  extensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
+  return VK_EXT_METAL_SURFACE_EXTENSION_NAME;
+#elif defined(__ANDROID__)
+  return VK_KHR_ANDROID_SURFACE_EXTENSION_NAME;
 #else /* UNIX/Linux */
   switch (platform_) {
 #  ifdef WITH_GHOST_X11
     case GHOST_kVulkanPlatformX11:
-      extensions.push_back(VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
+      return VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
       break;
 #  endif
 #  ifdef WITH_GHOST_WAYLAND
     case GHOST_kVulkanPlatformWayland:
-      extensions.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+      return VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME;
       break;
 #  endif
     case GHOST_kVulkanPlatformHeadless:
       break;
   }
 #endif
-  return extensions;
+  return nullptr;
 }
 
 GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
 {
   bool use_vk_ext_swapchain_colorspace = false;
-#if defined(WITH_GHOST_SDL)
-  const bool use_window_surface = (sdl_window_ != nullptr);
-#elif defined(_WIN32)
+#ifdef _WIN32
   const bool use_window_surface = (hwnd_ != nullptr);
 #elif defined(__APPLE__)
   const bool use_window_surface = (metal_layer_ != nullptr);
+#elif defined(__ANDROID__)
+  const bool use_window_surface = (native_window_ != nullptr);
 #else /* UNIX/Linux */
   bool use_window_surface = false;
   switch (platform_) {
@@ -1840,14 +1879,9 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
 #endif
 
     if (use_window_surface) {
-      const std::vector<const char *> surface_extensions = getPlatformSpecificSurfaceExtensions();
+      const char *native_surface_extension_name = getPlatformSpecificSurfaceExtension();
       instance_vk.extensions.enable(VK_KHR_SURFACE_EXTENSION_NAME);
-
-      for (const char *extension : surface_extensions) {
-        if (!instance_vk.extensions.is_enabled(extension)) {
-          instance_vk.extensions.enable(extension);
-        }
-      }
+      instance_vk.extensions.enable(native_surface_extension_name);
       /* X11 doesn't use the correct swapchain offset, flipping can squash the first frames. */
       const bool use_vk_ext_swapchain_maintenance1 =
 #ifdef WITH_GHOST_X11
@@ -1879,12 +1913,7 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
 
   /* Initialize VkSurface */
   if (use_window_surface) {
-#if defined(WITH_GHOST_SDL)
-    if (!SDL_Vulkan_CreateSurface(sdl_window_, instance_vk.vk_instance, nullptr, &surface_)) {
-      CLOG_ERROR(&LOG, "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
-      return GHOST_kFailure;
-    }
-#elif defined(_WIN32)
+#ifdef _WIN32
     VkWin32SurfaceCreateInfoKHR surface_create_info = {};
     surface_create_info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
     surface_create_info.hinstance = GetModuleHandle(nullptr);
@@ -1899,6 +1928,12 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
     info.flags = 0;
     info.pLayer = static_cast<CAMetalLayer *>(metal_layer_);
     VK_CHECK(volk::vkCreateMetalSurfaceEXT(instance_vk.vk_instance, &info, nullptr, &surface_),
+             GHOST_kFailure);
+#elif defined(__ANDROID__)
+    VkAndroidSurfaceCreateInfoKHR info = {};
+    info.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+    info.window = native_window_;
+    VK_CHECK(volk::vkCreateAndroidSurfaceKHR(instance_vk.vk_instance, &info, nullptr, &surface_),
              GHOST_kFailure);
 #else
     switch (platform_) {
@@ -1945,8 +1980,19 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
     optional_device_extensions.append(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
 #endif
 
+#ifndef __APPLE__
+    /* Optional: only affects the flat-shading provoking-vertex convention. */
     optional_device_extensions.append(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME);
-    required_device_extensions.append(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+#endif
+    /* Optional: absent on Vulkan 1.1 mobile GPUs (e.g. Adreno 642L); the Vulkan
+     * backend falls back to classic render passes when it is not enabled. */
+    optional_device_extensions.append(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+    /* Timeline semaphores and buffer device address are core in Vulkan 1.2 but
+     * must be enabled as extensions on 1.1 devices, otherwise their entry points
+     * (vkGetSemaphoreCounterValue, vkGetBufferDeviceAddress, …) are never loaded.
+     * The backend aliases the core function names to these in vk_device. */
+    optional_device_extensions.append(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+    optional_device_extensions.append(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
     optional_device_extensions.append(VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME);
     optional_device_extensions.append(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME);
     optional_device_extensions.append(VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME);
@@ -2037,6 +2083,81 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
   active_context_ = this;
   return GHOST_kSuccess;
 }
+
+#ifdef __ANDROID__
+GHOST_TSuccess GHOST_ContextVK::setAndroidNativeWindow(ANativeWindow *native_window)
+{
+  /* Only record the change here; the actual surface/swapchain teardown must run
+   * on the render thread at the swap boundary (applyAndroidSurfaceChange), where
+   * the backend's submission thread is synchronized. Doing it here races the
+   * submission thread and corrupts the heap (double free). */
+  __android_log_print(ANDROID_LOG_INFO,
+                      "blender-surface",
+                      "setAndroidNativeWindow old=%p new=%p",
+                      (void *)native_window_,
+                      (void *)native_window);
+  native_window_ = native_window;
+  android_surface_dirty_ = true;
+  return GHOST_kSuccess;
+}
+
+void GHOST_ContextVK::applyAndroidSurfaceChange()
+{
+  __android_log_print(ANDROID_LOG_INFO,
+                      "blender-surface",
+                      "applyAndroidSurfaceChange window=%p surface=%p swapchain=%p",
+                      (void *)native_window_,
+                      (void *)surface_,
+                      (void *)swapchain_);
+  android_surface_dirty_ = false;
+  if (!vulkan_instance.has_value() || !vulkan_instance->device.has_value()) {
+    return;
+  }
+  GHOST_InstanceVK &instance_vk = vulkan_instance.value();
+  GHOST_DeviceVK &device_vk = instance_vk.device.value();
+  device_vk.wait_idle();
+
+  /* Retire the swapchain bound to the old surface. This must complete before the
+   * surface is destroyed (a surface may not be destroyed while a swapchain still
+   * references it). Unlike destroySwapchain() we keep frame_data_ intact, since
+   * recreateSwapchain() relies on it being non-empty. */
+  if (swapchain_ != VK_NULL_HANDLE) {
+    this->destroySwapchainPresentFences(swapchain_);
+    device_vk.functions.vkDestroySwapchainKHR(device_vk.vk_device, swapchain_, nullptr);
+    swapchain_ = VK_NULL_HANDLE;
+  }
+  for (GHOST_SwapchainImage &swapchain_image : swapchain_images_) {
+    swapchain_image.destroy(device_vk.vk_device, device_vk.functions);
+  }
+  swapchain_images_.clear();
+  image_count_ = 0;
+
+  if (surface_ != VK_NULL_HANDLE) {
+    volk::vkDestroySurfaceKHR(instance_vk.vk_instance, surface_, nullptr);
+    surface_ = VK_NULL_HANDLE;
+  }
+
+  /* Window torn down (backgrounded): leave the surface null; the swapchain is
+   * rebuilt when a new window arrives. */
+  if (native_window_ == nullptr) {
+    return;
+  }
+
+  VkAndroidSurfaceCreateInfoKHR info = {};
+  info.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+  info.window = native_window_;
+  if (volk::vkCreateAndroidSurfaceKHR(instance_vk.vk_instance, &info, nullptr, &surface_) !=
+      VK_SUCCESS)
+  {
+    surface_ = VK_NULL_HANDLE;
+    return;
+  }
+
+  /* Force swapBufferAcquire to rebuild the swapchain for the new surface. */
+  render_extent_ = {0, 0};
+  render_extent_min_ = {0, 0};
+}
+#endif
 
 GHOST_TSuccess GHOST_ContextVK::releaseNativeHandles()
 {

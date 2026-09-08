@@ -14,14 +14,13 @@
 
 #include "GHOST_Context.hh"
 
-#if defined(WITH_GHOST_SDL)
-/* Required to be first as other platforms defines would take precedent otherwise. */
-struct SDL_Window; /* Avoid pulling in the full SDL3 headers. */
-#elif defined(_WIN32)
+#ifdef _WIN32
 #  include "GHOST_SystemWin32.hh"
 #elif defined(__APPLE__)
 #  include "GHOST_SystemCocoa.hh"
 #  include <vulkan/vulkan_metal.h>
+#elif defined(__ANDROID__)
+struct ANativeWindow;
 #else
 #  ifdef WITH_GHOST_X11
 #    include "GHOST_SystemX11.hh"
@@ -113,14 +112,13 @@ class GHOST_ContextVK : public GHOST_Context {
    * Constructor.
    */
   GHOST_ContextVK(const GHOST_ContextParams &context_params,
-#if defined(WITH_GHOST_SDL)
-                  /* SDL */
-                  SDL_Window *sdl_window,
-#elif defined(_WIN32)
+#ifdef _WIN32
                   HWND hwnd,
 #elif defined(__APPLE__)
                   /* FIXME CAMetalLayer but have issue with linking. */
                   void *metal_layer,
+#elif defined(__ANDROID__)
+                  ANativeWindow *native_window,
 #else
                   GHOST_TVulkanPlatformType platform,
                   /* X11 */
@@ -167,6 +165,24 @@ class GHOST_ContextVK : public GHOST_Context {
    */
   GHOST_TSuccess initializeDrawingContext() override;
 
+#ifdef __ANDROID__
+  /**
+   * Rebuild the Vulkan surface (and swapchain) for a new ANativeWindow.
+   *
+   * Android destroys and recreates the window's native surface on events like
+   * doze/wake or rotation; the old swapchain then references a dead surface and
+   * presents nothing. Pass the new window (or nullptr on teardown) to recreate.
+   */
+  GHOST_TSuccess setAndroidNativeWindow(ANativeWindow *native_window);
+
+ private:
+  /** Applied at the swap boundary (render thread) when the window was replaced. */
+  void applyAndroidSurfaceChange();
+  bool android_surface_dirty_ = false;
+
+ public:
+#endif
+
   /**
    * Removes references to native handles from this context and then returns
    * \return GHOST_kSuccess if it is OK for the parent to release the handles and
@@ -188,11 +204,6 @@ class GHOST_ContextVK : public GHOST_Context {
       std::function<void(GHOST_VulkanOpenXRData *)> openxr_acquire_framebuffer_image_callback,
       std::function<void(GHOST_VulkanOpenXRData *)> openxr_release_framebuffer_image_callback)
       override;
-
-#ifdef WITH_GHOST_SDL
-  /** Recreate the SDL presentation surface and swapchain. */
-  GHOST_TSuccess recreateSurface();
-#endif
 
 #ifdef WITH_GHOST_WAYLAND
   /**
@@ -252,14 +263,13 @@ class GHOST_ContextVK : public GHOST_Context {
   static bool is_device_extension_enabled(blender::StringRefNull extension_name);
 
  private:
-#if defined(WITH_GHOST_SDL)
-  /* SDL */
-  SDL_Window *sdl_window_;
-#elif defined(_WIN32)
+#ifdef _WIN32
   HWND hwnd_;
 #elif defined(__APPLE__)
   /* Is CAMetalLayer* */
   void *metal_layer_;
+#elif defined(__ANDROID__)
+  ANativeWindow *native_window_;
 #else /* Linux */
   GHOST_TVulkanPlatformType platform_;
   /* X11 */
@@ -301,7 +311,7 @@ class GHOST_ContextVK : public GHOST_Context {
   std::vector<VkFence> fence_pile_;
   std::map<VkSwapchainKHR, std::vector<VkFence>> present_fences_;
 
-  std::vector<const char *> getPlatformSpecificSurfaceExtensions() const;
+  const char *getPlatformSpecificSurfaceExtension() const;
   GHOST_TSuccess recreateSwapchain(bool use_hdr_swapchain);
   GHOST_TSuccess initializeFrameData();
   GHOST_TSuccess destroySwapchain();
