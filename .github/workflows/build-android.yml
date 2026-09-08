@@ -206,6 +206,14 @@ jobs:
           key: ${{ runner.os }}-blender-android
           max-size: 4G
 
+      - uses: actions/cache/restore@v4
+        id: cache-blender-build
+        with:
+          path: blender/build
+          key: blender-build-${{ steps.libs-commit.outputs.arm }}
+          restore-keys: |
+            blender-build-
+
       - name: Configure CMake
         id: cmake-attempt1
         run: |
@@ -240,6 +248,12 @@ jobs:
           cd blender
           cmake --build build --target install 2>&1 | tee build.log
           cmake --build build --target gradle_stage 2>&1 | tee gradle_stage.log
+
+      - uses: actions/cache/save@v4
+        if: success() && steps.cache-blender-build.outputs.cache-hit != 'true'
+        with:
+          path: blender/build
+          key: blender-build-${{ steps.libs-commit.outputs.arm }}
 
       - name: Package staged Gradle project
         if: steps.cmake-attempt1.outcome == 'success'
