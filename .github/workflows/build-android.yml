@@ -168,6 +168,12 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v2
+        with:
+          key: ${{ runner.os }}-blender-android
+          max-size: 4G
+
       - name: Configure CMake
         id: cmake-attempt1
         run: |
@@ -181,7 +187,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=install \
             -C build_files/cmake/config/blender_release.cmake \
             -DWITH_TESTS=OFF \
-            -DWITH_PYTHON_INSTALL=OFF \
+            -DWITH_PYTHON_INSTALL=ON \
+            -DWITH_COMPILER_CCACHE=ON \
             -DWITH_CYCLES_OSL=OFF \
             -DWITH_GHOST_X11=OFF \
             -DPYTHON_VERSION=3.13 \
