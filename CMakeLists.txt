@@ -344,6 +344,9 @@ if(ANDROID)
   set(WITH_GHOST_SDL OFF)
   set(WITH_GHOST_ANDROID ON)
   add_definitions(-DWITH_GHOST_ANDROID)
+  # volk must load the Android surface entrypoint (vkCreateAndroidSurfaceKHR)
+  # used by GHOST_ContextVK; without this the symbol stays undefined at link.
+  add_definitions(-DVK_USE_PLATFORM_ANDROID_KHR)
 else()
   option(WITH_GHOST_SDL "\
 Enable building Blender against SDL for windowing rather than the native APIs"
