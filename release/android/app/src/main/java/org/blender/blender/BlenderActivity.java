@@ -433,7 +433,7 @@ public class BlenderActivity extends NativeActivity {
    * package lastUpdateTime, per the SDL-era scheme: changes when the APK is updated). */
   private void extractRuntimeIfNeeded() {
     File root = new File(getFilesDir(), "blender/" + VERSION);
-    String stampToken = Long.toString(getApplicationInfo().lastUpdateTime);
+    String stampToken = Long.toString(new File(getApplicationInfo().sourceDir).lastModified());
     File stampFile = new File(getFilesDir(), ".installed-" + VERSION + "-" + stampToken);
 
     if (stampFile.isFile() && root.isDirectory()) {
