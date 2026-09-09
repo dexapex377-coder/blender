@@ -10,6 +10,10 @@ global:
   _init*;
   /* Android SDL main entry point looked up by SDLActivity nativeRunMain() (which uses dlsym() internally). */
   SDL_main*;
+  /* NativeActivity glue entry point: Android's NativeActivity calls this via dlopen() when it
+   * loads libblender.so (the glue's ANativeActivity_onCreate then spawns android_main). */
+  ANativeActivity_onCreate*;
+  android_main*;
   /* Needed for Python modules to work. */
   Py*;
   _Py*;

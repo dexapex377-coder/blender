@@ -86,21 +86,31 @@
   symbol: ANativeActivity_onCreate` en `NativeActivity.onCreate` → `BlenderActivity` no llega a abrirse
   (el launcher vuelve al frente). `nm -D libblender.so` mostraba SOLO 12 exports (Python inits) y CERO
   símbolos del glue (`android_app`, `android_main`, `ANativeActivity_onCreate`).
-- **Causa raíz**: el cache `blender/build` (cache/restore+save en `build-android.yml`, key
-  `blender-build-<libs-arm-commit>`) restauraba el árbol ninja con `build.ninja` y los CMakeLists con
-  **mtimes iguales** (todos recién extraídos del tar) → la regla `RERUN_CMAKE` de ninja no disparaba
-  reconfigure → el plan de link seguía siendo el pre-F1 (SDL, sin glue, sin `-Wl,-u`). El `.so`
-  resultante no contenía el glue.
-- **Fix** (dos partes, commits `33a67258` rama android + `73886ad7` rama main):
-  1. `source/creator/CMakeLists.txt`: el glue `android_native_app_glue.c` se compila **directo** en el
-     target `blender` (`target_sources` + `target_include_directories`), ya no vía la lib estática
-     ghost; se mantiene `-Wl,-u,ANativeActivity_onCreate`. Object directo ⇒ link + export garantizados
-     (no depende de scan de static lib ni de gc-sections). `intern/ghost/CMakeLists.txt` conserva solo
-     el `INC_SYS` del glue (headers para GHOST_AndroidMain.cc).
-  2. `build-android.yml`: **se elimina el cache `blender/build`** (restore + save). ccache se mantiene.
-- **Lección**: no cachear árboles ninja/CMake vía `actions/cache` — la restauración con mtimes frescos
-  rompe la regeneración de `build.ninja` y el build usa planes stale. ccache es la vía correcta de
-  acelerar (keyed por contenido de fuente) sin el riesgo.
-- **Verificación pendiente**: relanzar build (run `34307459241`), extraer el nuevo `gradle-stage`,
-  `nm -D | grep ANativeActivity_onCreate` debe dar la función, re-instalar y probar en device.
+- **Causa raíz REAL (la teoría del cache stale quedó FALSADA)**: el run `34307459241` SIN cache
+  `blender/build` siguió produciendo el `.so` con SOLO 13 exports (12 PyInit + free/calloc). El
+  culpable es el **version script de ocultación de símbolos**: el top-level `CMakeLists.txt` incluye
+  `platform_unix.cmake` en Android (`if((UNIX AND NOT APPLE) OR ANDROID)`), que define
+  `PLATFORM_LINKFLAGS_SYMBOL_HIDING = -Wl,--version-script='${PLATFORM_SYMBOLS_MAP}'`
+  (`platform_unix.cmake:1088` · `symbols_unix.map` con `local: *`). `creator/CMakeLists.txt:2015`
+  llama a `setup_platform_linker_symbol_hiding(blender)` (macros.cmake:597) y aplica el script al
+  link → TODO queda oculto salvo las wildcards `global:` del map. Los 13 exports del `.so` casan al
+  100% con esas wildcards (Py* / calloc* / free*): el glue (`ANativeActivity_onCreate`) no estaba en
+  el map → no se exportaba. Wanderson NO padece esto porque su top-level usa
+  `if(ANDROID) include(platform_android)` / `elseif(UNIX AND NOT APPLE) include(platform_unix)` y su
+  `.so` release exporta las 176k symbols (sin version script en absoluto). El glue SÍ estaba linkeado
+  en nuestro `.so` (el log mostró el .o compilado y link fresco `[7416/7660]`) — fallaba SOLO la
+  exportación.
+- **Fix** (commit `…` rama android): `source/creator/symbols_unix.map` → añadir al bloque `global:`
+  los entry points del glue NativeActivity:
+  - `ANativeActivity_onCreate*` (lo busca el runtime vía dlopen al cargar libblender.so)
+  - `android_main*` (el glue lo arranca desde ANativeActivity_onCreate)
+  (mismo patrón que el `SDL_main*` que ya estaba en el map para la ruta SDLActivity). Con esto el
+  ocultamiento de símbolos se mantiene para desktop y los símbolos del glue quedan exportados.
+- **Lección**: en Android el version script `symbols_unix.map` (con `local: *`) se aplica igual que en
+  desktop porque `platform_unix.cmake` se incluye para `ANDROID` también. Cualquier símbolo que el
+  runtime de Android deba dlsym (entry points del glue) tiene que estar listado en el `global:` del
+  map. La comprobación rápida: `nm -D libblender.so` y comparar contra las wildcards del map.
+- **Verificación pendiente**: relanzar build-android.yml; `nm -D` del nuevo `gradle-stage` debe listar
+  `ANativeActivity_onCreate` y `android_main`; re-instalar y probar en device (siempre que el runtime
+  pase del `onCreate` del glue, cerrar F1 y pasar a F2).
 
