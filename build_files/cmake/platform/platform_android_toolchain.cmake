@@ -88,6 +88,25 @@ set(ANDROID_STL c++_shared)
 set(ANDROID_USE_LEGACY_TOOLCHAIN ON)
 
 # ----------------------------------------------------------------------------
+# Android feature set (-DBLENDER_ANDROID_CONFIG=lite|full, or env, default full).
+
+# Mirrors build_files/cmake/platform/platform_android.cmake upstream: the same
+# feature file must drive both the target build and the host codegen-tools
+# build, otherwise generated RNA/DNA encodes a feature set that mismatches the
+# compiled target (missing getters, or silent corruption in release builds).
+if(NOT DEFINED BLENDER_ANDROID_CONFIG)
+  if(DEFINED ENV{BLENDER_ANDROID_CONFIG})
+    set(BLENDER_ANDROID_CONFIG $ENV{BLENDER_ANDROID_CONFIG})
+  else()
+    set(BLENDER_ANDROID_CONFIG full)
+  endif()
+endif()
+message(STATUS "Android config: ${BLENDER_ANDROID_CONFIG}")
+get_filename_component(_blender_root "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+include(${_blender_root}/build_files/android/android_features_${BLENDER_ANDROID_CONFIG}.cmake)
+unset(_blender_root)
+
+# ----------------------------------------------------------------------------
 # Main Android NDK toolchain file include
 
 include(${NDK_TOOLCHAIN_FILE})
