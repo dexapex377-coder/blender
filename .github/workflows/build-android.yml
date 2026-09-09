@@ -245,6 +245,7 @@ jobs:
       - name: Build and stage Gradle project
         if: steps.cmake-attempt1.outcome == 'success'
         run: |
+          set -o pipefail
           cd blender
           cmake --build build --target install 2>&1 | tee build.log
           cmake --build build --target gradle_stage 2>&1 | tee gradle_stage.log
