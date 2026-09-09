@@ -100,8 +100,8 @@
   `.so` release exporta las 176k symbols (sin version script en absoluto). El glue SÍ estaba linkeado
   en nuestro `.so` (el log mostró el .o compilado y link fresco `[7416/7660]`) — fallaba SOLO la
   exportación.
-- **Fix** (commit `…` rama android): `source/creator/symbols_unix.map` → añadir al bloque `global:`
-  los entry points del glue NativeActivity:
+- **Fix F1** (commit `ae0de45e` rama android): `source/creator/symbols_unix.map` → añadir al bloque
+  `global:` los entry points del glue NativeActivity:
   - `ANativeActivity_onCreate*` (lo busca el runtime vía dlopen al cargar libblender.so)
   - `android_main*` (el glue lo arranca desde ANativeActivity_onCreate)
   (mismo patrón que el `SDL_main*` que ya estaba en el map para la ruta SDLActivity). Con esto el
@@ -110,7 +110,38 @@
   desktop porque `platform_unix.cmake` se incluye para `ANDROID` también. Cualquier símbolo que el
   runtime de Android deba dlsym (entry points del glue) tiene que estar listado en el `global:` del
   map. La comprobación rápida: `nm -D libblender.so` y comparar contra las wildcards del map.
-- **Verificación pendiente**: relanzar build-android.yml; `nm -D` del nuevo `gradle-stage` debe listar
-  `ANativeActivity_onCreate` y `android_main`; re-instalar y probar en device (siempre que el runtime
-  pase del `onCreate` del glue, cerrar F1 y pasar a F2).
+- **Verificado (run `34350750790`, release de `33404664373` + android code)**: `nm -D` del `.so`
+  muestra `T ANativeActivity_onCreate` y `T android_main`. En device ya NO es `UnsatisfiedLinkError`;
+  el glue corre (`main()` arranca, llega a WM init). F1 CERRADO → pasó a BUG F2.
+
+### BUG F2 — `Unable to initialize GHOST, exiting!` (crash tras el permiso de almacenamiento)
+
+- **Síntoma**: con F1 resuelto, la app pide permiso de almacenamiento y luego crashea:
+  `blender: ghost.system | ERROR Unable to initialize GHOST, exiting!` a los 61ms del arranque, seguido
+  de `FORTIFY: pthread_mutex_lock called on a destroyed mutex` y `signal 6 (Aborted)`.
+- **Causa raíz**: `GHOST_ISystem::createSystem()` en la BASE (refactor multi-backend de Blender ≥4.x,
+  `intern/ghost/intern/GHOST_ISystem.cc`) **no tenía rama ANDROID**: el `#if/#elif` solo contemplaba
+  HEADLESS / X11+Wayland / X11 / Wayland / SDL / WIN32 / APPLE. El top-level `CMakeLists.txt`
+  (`#if ANDROID`) fija `WITH_GHOST_SDL=OFF` + `WITH_GHOST_ANDROID=ON` (+ `-DWITH_GHOST_ANDROID`
+  global), así que ninguna rama matcheaba → `system_` quedaba `nullptr` → `wm_window.cc:2299`
+  imprimía el error y hacía `exit(EXIT_FAILURE)` antes de inicializar nada. En el árbol de Wanderson
+  la rama SÍ existe:
+  ```c
+  #elif defined(WITH_GHOST_ANDROID)
+      backends_attempted.push_back({"ANDROID"});
+      CLOG_INFO(&LOG, "Create Android system");
+      system_ = new GHOST_SystemAndroid();
+  ```
+- **Fix F2** (commit `…` rama android): añadir a `GHOST_ISystem.cc`:
+  - include: `#elif defined(WITH_GHOST_ANDROID)` → `#include "GHOST_SystemAndroid.hh"`
+  - createSystem: rama `#elif defined(WITH_GHOST_ANDROID)` → `system_ = new GHOST_SystemAndroid()`
+  (idéntico al de Wanderson; la posición en la cadena es irrelevante porque los defines son mutuamente
+  exclusivos).
+- **Auditoría del resto del path Android** (diffs contra wanderson-audit): `GHOST_AndroidMain.cc`,
+  `GHOST_SystemAndroid.cc/.hh`, `GHOST_WindowAndroid.cc` son **idénticos**. Las diferencias en
+  `GHOST_ContextEGL.cc` y `creator.cc` son solo evolución del base (retry de config EGL alpha upstream,
+  SYCL env, `BLI_task_scheduler_init(denormals)`) + prints `[BlenderAndroid]` cosméticos de Wanderson.
+  Nada más bloqueante.
+- **Verificación pendiente**: relanzar; en device GHOST debe arrancar y pasar a la inicialización de
+  GPU/viewport. Próximo bug esperado: pipeline GLES/GPU backend (epoxy o draw).
 

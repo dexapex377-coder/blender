@@ -24,6 +24,8 @@
 #  include "GHOST_SystemWayland.hh"
 #elif defined(WITH_GHOST_SDL)
 #  include "GHOST_SystemSDL.hh"
+#elif defined(WITH_GHOST_ANDROID)
+#  include "GHOST_SystemAndroid.hh"
 #elif defined(WIN32)
 #  include "GHOST_SystemWin32.hh"
 #elif defined(__APPLE__)
@@ -152,6 +154,10 @@ GHOST_TSuccess GHOST_ISystem::createSystem(bool verbose, [[maybe_unused]] bool b
       delete system_;
       system_ = nullptr;
     }
+#elif defined(WITH_GHOST_ANDROID)
+    backends_attempted.push_back({"ANDROID"});
+    CLOG_INFO(&LOG, "Create Android system");
+    system_ = new GHOST_SystemAndroid();
 #elif defined(WIN32)
     backends_attempted.push_back({"WIN32"});
     CLOG_INFO(&LOG, "Create Windows system");
