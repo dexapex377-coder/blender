@@ -1,0 +1,109 @@
+name: assemble-android-apk-only
+
+# Rebuild just the APK from a previously built `gradle-stage` artifact
+# (which already contains the prebuilt libblender.so + runtime assets) and the
+# current app sources on the `android` branch. Use this to iterate on the app
+# (Java/Kotlin/Manifest/resources) without recompiling C++/ninja:
+#
+#   gh workflow run assemble-android-apk-only.yml --repo dexapex377-coder/blender \
+#     -f stage_artifact_run=<run-id-of-a-completed-build>
+#
+# Inputs:
+#   stage_artifact_run  Run ID of a completed workflow whose `gradle-stage`
+#                       artifact should be reused. Get it from `gh run list`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage_artifact_run:
+        description: Run ID of a completed workflow whose gradle-stage artifact to reuse
+        type: string
+        required: true
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout android branch (app sources to overlay)
+        uses: actions/checkout@v4
+        with:
+          ref: android
+          # The repo has stray git-lfs pointers (assets/*.blend) that cannot be
+          # smudged in the CI environment; the app overlay does not need them.
+          lfs: false
+
+      - name: Download staged Gradle project
+        uses: actions/download-artifact@v4
+        with:
+          name: gradle-stage
+          run-id: ${{ inputs.stage_artifact_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract and overlay app sources
+        run: |
+          set -o pipefail
+          mkdir -p stage
+          tar -I zstd -xf gradle-stage.tar.zst -C stage
+          chmod +x stage/gradle/gradlew
+          if [ -d release/android/app ]; then
+            # Refresh the app sources from HEAD without touching the staged .so/assets.
+            cp -rT release/android/app stage/gradle/app
+            echo "App sources overlaid from release/android/app:"
+            ls -la stage/gradle/app/src/main/java/org/blender/blender/
+          else
+            echo "release/android/app not present in this checkout, keeping staged sources"
+          fi
+          echo "--- app/build.gradle (overlaid) ---"
+          head -20 stage/gradle/app/build.gradle
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Gradle Wrapper distributions
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/wrapper
+          key: gradle-wrapper-${{ hashFiles('stage/gradle/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-wrapper-
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: gradle-caches-${{ hashFiles('stage/gradle/gradle/wrapper/gradle-wrapper.properties','stage/gradle/build.gradle','stage/gradle/settings.gradle','stage/gradle/gradle.properties','stage/gradle/app/build.gradle') }}
+
+      - name: Assemble APK
+        run: |
+          set -o pipefail
+          cd stage/gradle
+          ./gradlew assembleRelease \
+            -PblenderVersionName=5.2.0 \
+            -PblenderVersionCode=5020000 \
+            -PblenderMinSdk=29 2>&1 | tee gradle.log
+
+      - name: Find APK
+        id: find-apk
+        run: |
+          APK=$(find stage/gradle -name "app-release.apk" 2>/dev/null | head -1)
+          echo "apk_path=$APK"
+          echo "apk_path=$APK" >> $GITHUB_OUTPUT
+
+      - name: Upload APK
+        if: steps.find-apk.outputs.apk_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-android-apk
+          path: ${{ steps.find-apk.outputs.apk_path }}
+
+      - name: Upload Gradle logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-logs
+          path: |
+            stage/gradle/gradle.log
