@@ -80,3 +80,27 @@
 - **Punto de control pendiente**: commit + push rama android; disparar build-android.yml; si compila,
   cerrar F1 y pasar a F2.
 
+### BUG F1 — `undefined symbol: ANativeActivity_onCreate` (crash al arrancar en device)
+
+- **Síntoma**: primer APK instalado en el device (moto g56 5G): `UnsatisfiedLinkError ... undefined
+  symbol: ANativeActivity_onCreate` en `NativeActivity.onCreate` → `BlenderActivity` no llega a abrirse
+  (el launcher vuelve al frente). `nm -D libblender.so` mostraba SOLO 12 exports (Python inits) y CERO
+  símbolos del glue (`android_app`, `android_main`, `ANativeActivity_onCreate`).
+- **Causa raíz**: el cache `blender/build` (cache/restore+save en `build-android.yml`, key
+  `blender-build-<libs-arm-commit>`) restauraba el árbol ninja con `build.ninja` y los CMakeLists con
+  **mtimes iguales** (todos recién extraídos del tar) → la regla `RERUN_CMAKE` de ninja no disparaba
+  reconfigure → el plan de link seguía siendo el pre-F1 (SDL, sin glue, sin `-Wl,-u`). El `.so`
+  resultante no contenía el glue.
+- **Fix** (dos partes, commits `33a67258` rama android + `73886ad7` rama main):
+  1. `source/creator/CMakeLists.txt`: el glue `android_native_app_glue.c` se compila **directo** en el
+     target `blender` (`target_sources` + `target_include_directories`), ya no vía la lib estática
+     ghost; se mantiene `-Wl,-u,ANativeActivity_onCreate`. Object directo ⇒ link + export garantizados
+     (no depende de scan de static lib ni de gc-sections). `intern/ghost/CMakeLists.txt` conserva solo
+     el `INC_SYS` del glue (headers para GHOST_AndroidMain.cc).
+  2. `build-android.yml`: **se elimina el cache `blender/build`** (restore + save). ccache se mantiene.
+- **Lección**: no cachear árboles ninja/CMake vía `actions/cache` — la restauración con mtimes frescos
+  rompe la regeneración de `build.ninja` y el build usa planes stale. ccache es la vía correcta de
+  acelerar (keyed por contenido de fuente) sin el riesgo.
+- **Verificación pendiente**: relanzar build (run `34307459241`), extraer el nuevo `gradle-stage`,
+  `nm -D | grep ANativeActivity_onCreate` debe dar la función, re-instalar y probar en device.
+
