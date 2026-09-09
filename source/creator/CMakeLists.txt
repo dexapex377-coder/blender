@@ -339,8 +339,19 @@ elseif(ANDROID)
   # ANativeActivity_onCreate). Build a shared library rather than an executable.
   add_library(blender SHARED ${SRC})
   set_target_properties(blender PROPERTIES OUTPUT_NAME blender)
-  # Force-keep the glue entry point (only the Android runtime references it),
-  # which pulls in android_main and the JNI bridge from bf_intern_ghost.
+  # The Android glue (android_native_app_glue.c) is what defines
+  # ANativeActivity_onCreate. Compile it directly into this target (not via the
+  # ghost static lib) so the entry point is always linked and exported regardless
+  # of static-lib scan order / gc-sections.
+  target_sources(blender PRIVATE
+    ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
+  )
+  target_include_directories(blender PRIVATE
+    ${ANDROID_NDK}/sources/android/native_app_glue
+  )
+  # Force-keep the glue entry point in the dynamic symbol table (only the Android
+  # runtime references it), which pulls in android_main and the JNI bridge from
+  # bf_intern_ghost.
   target_link_options(blender PRIVATE -Wl,-u,ANativeActivity_onCreate)
 else()
   add_executable(blender ${EXETYPE} ${SRC})

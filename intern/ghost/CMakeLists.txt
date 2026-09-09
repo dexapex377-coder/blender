@@ -172,10 +172,10 @@ elseif(WITH_GHOST_ANDROID)
   )
   add_definitions(-DWITH_GHOST_ANDROID)
 
-  # NativeActivity glue ships with the NDK as source.
-  list(APPEND SRC
-    ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
-  )
+  # NativeActivity glue ships with the NDK as source, but the .c is compiled
+  # directly into the `blender` shared target in source/creator/CMakeLists.txt
+  # (guaranteed link + export of ANativeActivity_onCreate). We keep only the
+  # headers here for GHOST_AndroidMain.cc / GHOST_SystemAndroid.
   list(APPEND INC_SYS
     ${ANDROID_NDK}/sources/android/native_app_glue
   )
