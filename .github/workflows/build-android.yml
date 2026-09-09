@@ -206,13 +206,11 @@ jobs:
           key: ${{ runner.os }}-blender-android
           max-size: 4G
 
-      - uses: actions/cache/restore@v4
-        id: cache-blender-build
-        with:
-          path: blender/build
-          key: blender-build-${{ steps.libs-commit.outputs.arm }}
-          restore-keys: |
-            blender-build-
+      # NOTE: no cache for blender/build. A restored ninja tree kept a stale
+      # build.ninja (mtime equal to the checked-out CMakeLists after cache
+      # extraction) so cmake never reconfigured: the link missed the new NDK
+      # glue object and libblender.so shipped without ANativeActivity_onCreate
+      # (crash on device: "undefined symbol"). ccache above is enough.
 
       - name: Configure CMake
         id: cmake-attempt1
@@ -249,12 +247,6 @@ jobs:
           cd blender
           cmake --build build --target install 2>&1 | tee build.log
           cmake --build build --target gradle_stage 2>&1 | tee gradle_stage.log
-
-      - uses: actions/cache/save@v4
-        if: success() && steps.cache-blender-build.outputs.cache-hit != 'true'
-        with:
-          path: blender/build
-          key: blender-build-${{ steps.libs-commit.outputs.arm }}
 
       - name: Package staged Gradle project
         if: steps.cmake-attempt1.outcome == 'success'
