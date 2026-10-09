@@ -136,9 +136,9 @@ static void rna_Operator_enum_search_invoke(bContext *C, wmOperator *op)
   WM_enum_search_invoke(C, op, nullptr);
 }
 
-static int rna_Operator_ui_popup(bContext *C, wmOperator *op, int width)
+static int rna_Operator_ui_popup(bContext *C, wmOperator *op, int width, bool auto_keymap)
 {
-  return wmOperatorStatus(WM_operator_ui_popup(C, op, width));
+  return wmOperatorStatus(WM_operator_ui_popup(C, op, width, auto_keymap));
 }
 
 static bool rna_event_modal_handler_add(bContext *C, ReportList *reports, wmOperator *op)
@@ -685,14 +685,15 @@ static void rna_PopMenuEnd(bContext *C, PointerRNA *handle)
 static PointerRNA rna_PopoverBegin(bContext *C,
                                    ReportList *reports,
                                    const int ui_units_x,
-                                   const bool from_active_button)
+                                   const bool from_active_button,
+                                   const bool auto_keymap)
 {
   if (!rna_popup_context_ok_or_report(C, reports)) {
     return {};
   }
 
   void *data = static_cast<void *>(
-      ui::popover_begin(C, U.widget_unit * ui_units_x, from_active_button));
+      ui::popover_begin(C, U.widget_unit * ui_units_x, from_active_button, auto_keymap));
   PointerRNA ptr_result = RNA_pointer_create_discrete(nullptr, RNA_UIPopover, data);
   return ptr_result;
 }
@@ -880,9 +881,14 @@ static void rna_asset_library_status_ping_loaded_new_preview(bContext *C,
 }
 
 static void rna_asset_library_status_ping_asset_file_progress(const char *absolute_file_url,
-                                                              const int size_written)
+                                                              const int size_written_high,
+                                                              const int size_written_low)
 {
-  RemoteLibraryLoadingStatus::ping_asset_file_progress(absolute_file_url, size_written);
+  /* This splitting & merging of the size-in-bytes into 32-bit integers is just a temporary
+   * workaround for RNA's limitation on ints. Once that's been lifted, and the size in bytes can be
+   * passed directly as 64-bit int, this function should be updated for that. */
+  const int64_t size_in_bytes = (size_written_high << 31) + size_written_low;
+  RemoteLibraryLoadingStatus::ping_asset_file_progress(absolute_file_url, size_in_bytes);
 }
 
 static void rna_asset_library_status_ping_asset_file_succeeded(bContext *C,
@@ -1160,6 +1166,11 @@ void RNA_api_wm(StructRNA *srna)
                                   "Operator popup invoke "
                                   "(only shows operator's properties, without executing it)");
   rna_generic_op_invoke(func, WM_GEN_INVOKE_SIZE | WM_GEN_INVOKE_RETURN);
+  RNA_def_boolean(func,
+                  "auto_keymap",
+                  false,
+                  "Auto Keymap",
+                  "Assign accelerator keys to buttons, shown as underlined characters");
 
   func = RNA_def_function(srna, "invoke_confirm", "rna_Operator_confirm");
   RNA_def_function_ui_description(
@@ -1251,6 +1262,11 @@ void RNA_api_wm(StructRNA *srna)
   RNA_def_function_return(func, parm);
   RNA_def_boolean(
       func, "from_active_button", false, "Use Button", "Use the active button for positioning");
+  RNA_def_boolean(func,
+                  "auto_keymap",
+                  false,
+                  "Auto Keymap",
+                  "Assign accelerator keys to buttons, shown as underlined characters");
 
   /* wrap popover_end */
   func = RNA_def_function(srna, "popover_end__internal", "rna_PopoverEnd");
@@ -1817,16 +1833,27 @@ void RNA_api_asset_library_loading_status(StructRNA *srna)
                         "URL",
                         "The absolute URL this file was downloaded from");
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
-  parm = RNA_def_int(
-      func,
-      "size_written",
-      0,
-      0,
-      INT_MAX,
-      "Size Written to Disk",
-      "The number of bytes written to disk after uncompressing the download data, if needed",
-      0,
-      0);
+  parm = RNA_def_int(func,
+                     "size_written_high",
+                     0,
+                     0,
+                     INT_MAX,
+                     "Size Written to Disk (high bits)",
+                     "The high 31 bits of the number of bytes written to disk (after "
+                     "uncompressing the download data, if needed)",
+                     0,
+                     0);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_int(func,
+                     "size_written_low",
+                     0,
+                     0,
+                     INT_MAX,
+                     "Size Written to Disk (low bits)",
+                     "The low 31 bits of the number of bytes written to disk (after "
+                     "uncompressing the download data, if needed)",
+                     0,
+                     0);
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
 
   func = RNA_def_function(srna,

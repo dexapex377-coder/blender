@@ -18,7 +18,6 @@ from ..utils.nodes import (
     nw_check,
     nw_check_selected,
     nw_check_space_type,
-    get_nodes_links,
     get_first_enabled_output,
 )
 
@@ -154,7 +153,10 @@ class NODE_OT_merge_selected(Operator, NWBase):
             node_type = 'ShaderNode'
         elif tree_type == 'TEXTURE':
             node_type = 'TextureNode'
-        nodes, links = get_nodes_links(context)
+
+        tree = context.space_data.edit_tree
+        nodes = tree.nodes
+        links = tree.links
         mode = self.mode
         merge_type = self.merge_type
         # Prevent trying to add Depth Combine in not 'COMPOSITING' node tree.
@@ -321,6 +323,10 @@ class NODE_OT_merge_selected(Operator, NWBase):
                         add_type = 'GeometryNodeJoinGeometry'
                         add = self.merge_with_multi_input(
                             nodes_list, merge_position, do_hide, loc_x, links, nodes, add_type, [0])
+                    elif mode == 'INSTANCES':
+                        add_type = 'GeometryNodeGeometryToInstance'
+                        add = self.merge_with_multi_input(
+                            nodes_list, merge_position, do_hide, loc_x, links, nodes, add_type, [0])
                     else:
                         add_type = 'GeometryNodeMeshBoolean'
                         indices = [0, 1] if mode == 'DIFFERENCE' else [1]
@@ -366,6 +372,7 @@ class NODE_OT_merge_selected(Operator, NWBase):
                 'CompositorNodeZcombine': [0, 2],
                 'CompositorNodeAlphaOver': [1, 2],
                 'FunctionNodeBooleanMath': [0, 1],
+                'FunctionNodeIntegerMath': [0, 1],
             }
 
             first, second = socket_dict[add.bl_idname]
