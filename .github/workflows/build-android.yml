@@ -288,6 +288,20 @@ jobs:
         run: |
           set -o pipefail
           cd blender
+          # WITH_DOC_MANPAGE=OFF, and not because the man page is unwanted: on Android the
+          # `blender` target is add_library(blender SHARED), so install/blender is a library
+          # and cannot be executed. source/creator/CMakeLists.txt generates the man page by
+          # running the installed binary with --help, under a guard of UNIX AND NOT APPLE
+          # that Android satisfies, so the install step dies at the very end of an otherwise
+          # complete build:
+          #   [7/8] Linking CXX shared library lib/libblender.so
+          #   FileNotFoundError: ... '/install/blender'
+          # The library is already built and linked by then, so this costs nothing.
+          #
+          # Keep the explanation here and not inline in the command below: a '#' comment
+          # between two backslash-continued lines eats the trailing backslash, the command
+          # breaks in half, and the next flag runs as its own program:
+          #   line 24: -DWITH_DOC_MANPAGE=OFF: command not found
           cmake -B build \
             -S . \
             -DTARGET_ANDROID=ON \
@@ -300,14 +314,6 @@ jobs:
             -DWITH_COMPILER_CCACHE=ON \
             -DWITH_CYCLES_OSL=OFF \
             -DWITH_GHOST_X11=OFF \
-            # source/creator/CMakeLists.txt runs the man-page generator under
-            # `if(UNIX AND NOT APPLE)` and executes ${BLENDER_BIN} to get --help. On Android
-            # the `blender` target is add_library(blender SHARED), so install/blender is a
-            # .so, not a program, and the install step dies at the very end of an otherwise
-            # complete build:
-            #   [7/8] Linking CXX shared library lib/libblender.so
-            #   FileNotFoundError: ... '/install/blender'
-            # The library is already built and linked by then, so this is pure collateral.
             -DWITH_DOC_MANPAGE=OFF \
             -DPYTHON_VERSION=3.13 \
             -DPYTHON_EXECUTABLE=$(which python3) \
