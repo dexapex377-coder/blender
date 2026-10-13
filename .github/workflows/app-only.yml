@@ -18,13 +18,52 @@ on:
       stage_artifact_run:
         description: Run ID of a completed workflow whose gradle-stage artifact to reuse
         type: string
-        required: true
+        required: false
+        default: ''
 
 jobs:
   assemble:
     runs-on: ubuntu-latest
 
     steps:
+      # Read the version out of the source instead of writing it into the workflow. This
+      # passed -PblenderVersionName=5.3.0 Alpha literally, so the string the phone shows
+      # was whatever the yml happened to say rather than what was built. It agreed with
+      # the source by coincidence; the day the android branch moves to another version it
+      # would be quietly wrong. The arithmetic mirrors platform_android_gradle.cmake:
+      #   abi_prefix * 100000000 + major * 1000000 + minor * 10000 + patch * 100
+      # so 5.3.0 alpha on arm64-v8a is 105030000, and versionCode only ever grows, which
+      # matters when installing over an older build.
+      - name: Derive the APK version from the source
+        id: version
+        run: |
+          set -o pipefail
+          H=$(find . -name BKE_blender_version.h -not -path '*/.git/*' 2>/dev/null | head -1)
+          if [ -z "$H" ] || [ ! -f "$H" ]; then
+            echo "::warning::BKE_blender_version.h is not in the artifact; leaving the"
+            echo "::warning::version at the workflow's own value."
+            exit 0
+          fi
+          VER=$(sed -n 's/^#define BLENDER_VERSION[[:space:]]\{1,\}\([0-9]*\).*/\1/p' "$H" | head -1)
+          PATCH=$(sed -n 's/^#define BLENDER_VERSION_PATCH[[:space:]]\{1,\}\([0-9]*\).*/\1/p' "$H" | head -1)
+          CYCLE=$(sed -n 's/^#define BLENDER_VERSION_CYCLE[[:space:]]\{1,\}\([A-Za-z]*\).*/\1/p' "$H" | head -1)
+          if [ -z "$VER" ]; then
+            echo "ERROR: could not parse BLENDER_VERSION out of $H"
+            exit 1
+          fi
+          # BLENDER_VERSION is major*100 + minor (503 is 5.3), not the major on its own.
+          # Reading it as the major gives "503.0.0 alpha" and a versionCode of 603000000.
+          MAJOR=$(( VER / 100 ))
+          MINOR=$(( VER % 100 ))
+          [ -n "$PATCH" ] || PATCH=0
+          [ -n "$CYCLE" ] || CYCLE=release
+          NAME="$MAJOR.$MINOR.$PATCH $CYCLE"
+          CODE=$(( 1 * 100000000 + MAJOR * 1000000 + MINOR * 10000 + PATCH * 100 ))
+          echo "read $H -> BLENDER_VERSION=$VER PATCH=$PATCH CYCLE=$CYCLE"
+          echo "parsed as $MAJOR.$MINOR.$PATCH"
+          echo "APK will report versionName='$NAME' versionCode=$CODE"
+          echo "version_name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$CODE" >> "$GITHUB_OUTPUT"
       - name: Checkout android branch (app sources to overlay)
         uses: actions/checkout@v4
         with:
@@ -95,8 +134,8 @@ jobs:
           ABI=$(find app/src/main/jniLibs -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | head -1)
           [ -n "$ABI" ] || ABI=arm64-v8a
           ARGS=(
-            "-PblenderVersionName=5.3.0 Alpha"
-            "-PblenderVersionCode=5030001"
+            "-PblenderVersionName=${{ steps.version.outputs.version_name || '5.3.0 Alpha' }}"
+            "-PblenderVersionCode=${{ steps.version.outputs.version_code || '105030000' }}"
             "-PblenderMinSdk=29"
             "-PblenderAbi=$ABI"
           )
