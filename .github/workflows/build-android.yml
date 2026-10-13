@@ -114,8 +114,14 @@ jobs:
           fi
           echo "arm=$ARM_PIN" >> $GITHUB_OUTPUT
           echo "x64=$X64_PIN" >> $GITHUB_OUTPUT
+          # The checked-out source commit, not github.sha: github.sha is the commit of the
+          # branch that carries this workflow, so it moves every time the yml is edited and
+          # would throw the build tree away on each fix. What the tree depends on is the
+          # source it was configured from.
+          echo "src=$(git -C blender rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo "Pinned lib-android_arm64 = $ARM_PIN"
           echo "Pinned lib-linux_x64    = $X64_PIN"
+          echo "Source commit           = $(git -C blender rev-parse HEAD)"
 
       - uses: actions/cache/restore@v4
         id: cache-libs-android
@@ -254,11 +260,28 @@ jobs:
           key: ${{ runner.os }}-blender-android
           max-size: 4G
 
-      # NOTE: no cache for blender/build. A restored ninja tree kept a stale
-      # build.ninja (mtime equal to the checked-out CMakeLists after cache
-      # extraction) so cmake never reconfigured: the link missed the new NDK
-      # glue object and libblender.so shipped without ANativeActivity_onCreate
-      # (crash on device: "undefined symbol"). ccache above is enough.
+      # Incremental builds. The key is the exact source commit plus both library commits, and
+      # there are deliberately NO restore-keys: a prefix match is what let a tree from one
+      # revision land on top of another and stop cmake reconfiguring. An exact key either
+      # hits the tree this commit needs or misses and configures from scratch.
+      - name: Restore ninja build tree
+        id: cache-builddir
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: blender/build
+          key: builddir-${{ runner.os }}-${{ steps.libs-commit.outputs.src }}-a${{ steps.libs-commit.outputs.arm }}-x${{ steps.libs-commit.outputs.x64 }}
+          enableCrossOsArchive: false
+
+      # Saved even when a later step fails: a tree that got as far as linking is worth far
+      # more on the retry than a clean one is. Keyed identically, so a rerun of the same
+      # commit restores it.
+      - name: Save ninja build tree
+        if: always() && steps.cache-builddir.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: blender/build
+          key: builddir-${{ runner.os }}-${{ steps.libs-commit.outputs.src }}-a${{ steps.libs-commit.outputs.arm }}-x${{ steps.libs-commit.outputs.x64 }}
 
       - name: Configure CMake
         id: cmake-attempt1
@@ -277,6 +300,15 @@ jobs:
             -DWITH_COMPILER_CCACHE=ON \
             -DWITH_CYCLES_OSL=OFF \
             -DWITH_GHOST_X11=OFF \
+            # source/creator/CMakeLists.txt runs the man-page generator under
+            # `if(UNIX AND NOT APPLE)` and executes ${BLENDER_BIN} to get --help. On Android
+            # the `blender` target is add_library(blender SHARED), so install/blender is a
+            # .so, not a program, and the install step dies at the very end of an otherwise
+            # complete build:
+            #   [7/8] Linking CXX shared library lib/libblender.so
+            #   FileNotFoundError: ... '/install/blender'
+            # The library is already built and linked by then, so this is pure collateral.
+            -DWITH_DOC_MANPAGE=OFF \
             -DPYTHON_VERSION=3.13 \
             -DPYTHON_EXECUTABLE=$(which python3) \
             -DTEST_PYTHON_EXE=$(which python3) \
