@@ -292,6 +292,25 @@ jobs:
           # between two backslash-continued lines eats the trailing backslash, the command
           # breaks in half, and the next flag runs as its own program:
           #   line 24: -DWITH_DOC_MANPAGE=OFF: command not found
+          # WITH_TBB_MALLOC_PROXY=OFF. blender_release.cmake does
+          # set(WITH_TBB_MALLOC_PROXY ON CACHE BOOL "" FORCE) and that -C file is given to
+          # cmake below, so a -D placed before it would lose; this one comes after.
+          #
+          # Off because tbbmalloc tags its pointers on arm64, and a tagged pointer reaching
+          # bionic's free() instead of the proxy's is a hard abort on Android 16:
+          #   Fatal signal 6 (SIGABRT) in tid (SDLActivity)
+          #   Abort message: 'Pointer tag for 0x74395f7f90 was truncated'
+          #     #05 linker64 __dl__ZN6soinfo17call_constructorsEv
+          #     #04 libMaterialXCore.so
+          #     #03 libMaterialXCore.so
+          #     #02 libMaterialXCore.so
+          #     #01 libc.so free+104
+          # It dies in a static constructor during dlopen, so it reads like a MaterialX bug.
+          # The tell is in libblender.so itself: the 8-Sep build that works has 29 DT_NEEDED
+          # entries and neither of these, the build that crashes has 31:
+          #   libtbbmalloc.so, libtbbmalloc_proxy.so
+          # Blender prints WITH_TBB_MALLOC_PROXY in its config summary, so if something
+          # overrides this it will be visible in the log rather than silently lost.
           cmake -B build \
             -S . \
             -DTARGET_ANDROID=ON \
@@ -305,6 +324,7 @@ jobs:
             -DWITH_CYCLES_OSL=OFF \
             -DWITH_GHOST_X11=OFF \
             -DWITH_DOC_MANPAGE=OFF \
+            -DWITH_TBB_MALLOC_PROXY=OFF \
             -DPYTHON_VERSION=3.13 \
             -DPYTHON_EXECUTABLE=$(which python3) \
             -DTEST_PYTHON_EXE=$(which python3) \
@@ -356,6 +376,22 @@ jobs:
             echo "::warning::libblender.so does not export ANativeActivity_onCreate"
             echo "::warning::(expected on the SDL path: libSDL3.so provides it)"
           fi
+          # tbbmalloc's proxy replaces the global allocator and tags its pointers on arm64.
+          # A tagged pointer that reaches bionic's free() instead of the proxy's aborts the
+          # process at dlopen, in whatever library's static constructor happens to be running:
+          #   Abort message: 'Pointer tag for 0x... was truncated'
+          # so this is fatal on the device even though the build is perfectly clean. Assert
+          # it here rather than finding it on a phone.
+          NEEDED=$(readelf -d "$SO" | grep NEEDED | grep -oE '\[[^]]+\]' | tr -d '[]')
+          if echo "$NEEDED" | grep -qx 'libtbbmalloc_proxy\.so'; then
+            echo "ERROR: libblender.so links libtbbmalloc_proxy.so (allocator mismatch on Android)"
+            echo "       DT_NEEDED contains: $(echo "$NEEDED" | grep -i tbbmalloc | tr '\n' ' ')"
+            echo "       blender_release.cmake forces WITH_TBB_MALLOC_PROXY ON; it must be"
+            echo "       overridden on the command line with -DWITH_TBB_MALLOC_PROXY=OFF."
+            exit 1
+          fi
+          echo "OK: no tbbmalloc proxy in DT_NEEDED"
+          echo "$NEEDED" | tr '\n' ' ' | fold -sw 100 | sed 's/^/  DT_NEEDED: /'
 
 
       # This has to run AFTER the build, not next to the restore. Placed there it saved
