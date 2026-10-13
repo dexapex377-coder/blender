@@ -273,16 +273,6 @@ jobs:
           key: builddir-${{ runner.os }}-${{ steps.libs-commit.outputs.src }}-a${{ steps.libs-commit.outputs.arm }}-x${{ steps.libs-commit.outputs.x64 }}
           enableCrossOsArchive: false
 
-      # Saved even when a later step fails: a tree that got as far as linking is worth far
-      # more on the retry than a clean one is. Keyed identically, so a rerun of the same
-      # commit restores it.
-      - name: Save ninja build tree
-        if: always() && steps.cache-builddir.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: blender/build
-          key: builddir-${{ runner.os }}-${{ steps.libs-commit.outputs.src }}-a${{ steps.libs-commit.outputs.arm }}-x${{ steps.libs-commit.outputs.x64 }}
-
       - name: Configure CMake
         id: cmake-attempt1
         run: |
@@ -366,6 +356,19 @@ jobs:
             echo "::warning::libblender.so does not export ANativeActivity_onCreate"
             echo "::warning::(expected on the SDL path: libSDL3.so provides it)"
           fi
+
+
+      # This has to run AFTER the build, not next to the restore. Placed there it saved
+      # blender/build before the configure step had created it -- zero seconds, an empty
+      # archive, and every later run a guaranteed miss. Placed here it captures a tree that
+      # got as far as linking, which is worth far more on the retry than a clean one.
+      # if: always() so a failure in the build step still banks the partial tree.
+      - name: Save ninja build tree
+        if: always() && steps.cache-builddir.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: blender/build
+          key: builddir-${{ runner.os }}-${{ steps.libs-commit.outputs.src }}-a${{ steps.libs-commit.outputs.arm }}-x${{ steps.libs-commit.outputs.x64 }}
 
       - name: Package staged Gradle project
         if: steps.cmake-attempt1.outcome == 'success'
