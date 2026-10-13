@@ -336,9 +336,20 @@ jobs:
           # Say which binary this actually produced. libblender.so is what every later
           # conclusion rests on, and "the same commit built a different .so" is the failure
           # mode that makes a regression impossible to bisect.
-          SO=build/bin/libblender.so
-          test -s "$SO" || { echo "ERROR: $SO missing or empty"; exit 1; }
-          echo "=== libblender.so ==="
+          SO=""
+          for cand in build/lib/libblender.so build/bin/libblender.so install/libblender.so; do
+            if [ -s "$cand" ]; then SO="$cand"; break; fi
+          done
+          if [ -z "$SO" ]; then
+            echo "ERROR: libblender.so not found. Looked in:"
+            for cand in build/lib/libblender.so build/bin/libblender.so install/libblender.so; do
+              echo "  $cand"
+            done
+            echo "actual build/lib contents:"
+            ls -la build/lib/ 2>/dev/null | head -20 || echo "  (no build/lib)"
+            exit 1
+          fi
+          echo "=== libblender.so ($SO) ==="
           ls -l "$SO"
           echo "sha256: $(sha256sum "$SO" | awk '{print $1}')"
           echo "build-id: $(readelf -n "$SO" 2>/dev/null | grep -oE '[0-9a-f]{40}' | head -1)"
